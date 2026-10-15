@@ -175,7 +175,7 @@ def run_mbar_calculations(
     u_nk_list = []
     xvg_files = sorted(xvg_files)
     for f in xvg_files:
-        logger.debug("Processing file for mbar: %s", f)
+        logger.debug("Processing file for mbar: %s", local_path(f))
         if f.suffix == ".xvg":
             u_nk_list.append(extract_u_nk(f, T=300))
         else:

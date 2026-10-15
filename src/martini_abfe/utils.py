@@ -115,7 +115,16 @@ def write_json_file(data: dict, json_file: Path, compact_lists: bool = False):
             json.dump(data, file, cls=CompactListEncoder, indent=4)
         else:
             json.dump(data, file, indent=4)
-    logger.debug("Wrote data to JSON file %s", json_file)
+    logger.debug("Wrote data to JSON file %s", local_path(json_file))
+
+
+def local_command(command: str) -> str:
+    """
+    Shorten the paths below the working directory in a command for messages.
+    :param command: Command line.
+    :return: Command line with these paths relative to the working directory.
+    """
+    return command.replace(os.getcwd() + os.sep, "")
 
 
 def local_path(path: str | Path) -> str:
@@ -140,7 +149,7 @@ def replace_in_file(file_path: Path, replacements: dict):
         for old, new in replacements.items():
             content = content.replace(old, new)
         file.overwrite(content)
-    logger.debug("Replaced strings in file %s", file_path)
+    logger.debug("Replaced strings in file %s", local_path(file_path))
 
 
 def clean_pdb_structure(
@@ -192,7 +201,9 @@ def clean_pdb_structure(
     output_lines.append("END\n")
     with open(output_clean, "w", encoding="utf-8") as outfile:
         outfile.writelines(output_lines)
-    logger.debug("Cleaned up pdb structure and saved to %s", output_clean)
+    logger.debug(
+        "Cleaned up pdb structure and saved to %s", local_path(output_clean)
+    )
     return chains
 
 

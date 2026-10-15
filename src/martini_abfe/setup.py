@@ -21,6 +21,8 @@ from .utils import (
     get_charge_from_itp,
     get_molecule_name_from_itp,
     get_residue_com_from_pdb,
+    local_command,
+    local_path,
     write_json_file,
 )
 
@@ -298,7 +300,7 @@ def setup_protein_structure(config: OmegaConf):
         f"martinize2 -f {output_clean} -o {output_top} -x {output_pdb} {extra_args}"
     )
     # Run martinize2 command in the system directory, where it writes the itp file
-    logger.debug("Running command: %s", martinize_cmd)
+    logger.debug("Running command: %s", local_command(martinize_cmd))
     with open(directory / "martinize.log", "w", encoding="utf-8") as log_file:
         run(
             martinize_cmd,
@@ -322,7 +324,7 @@ def setup_protein_structure(config: OmegaConf):
         raise FileNotFoundError(f"Included itp file {itp_file} not found.")
     if itp_file.resolve() != output_itp:
         shutil.move(itp_file, output_itp)
-        logger.debug("Moved itp file to %s", output_itp)
+        logger.debug("Moved itp file to %s", local_path(output_itp))
     # Run OLIVES if specified in config
     olives = sim_config.protein.get("olives", None)
     if olives == "auto":
@@ -338,7 +340,7 @@ def setup_protein_structure(config: OmegaConf):
         if not Path(olives).exists():
             raise FileNotFoundError(f"OLIVES script {olives} not found.")
         olives_cmd = f"python {olives} -c {output_pdb} -i {output_itp}"
-        logger.debug("Running OLIVES command: %s", olives_cmd)
+        logger.debug("Running OLIVES command: %s", local_command(olives_cmd))
         with open(directory / "olives.log", "w", encoding="utf-8") as log_file:
             run(
                 olives_cmd,
@@ -355,7 +357,7 @@ def setup_protein_structure(config: OmegaConf):
         )
     # Delete useless top file
     output_top.unlink()
-    logger.debug("Deleted temporary top file %s", output_top)
+    logger.debug("Deleted temporary top file %s", local_path(output_top))
     # Get ligand COM from config or reference pdb file
     if isinstance(sim_config.protein.ligand, str):
         ligand_com = get_residue_com_from_pdb(input_file, sim_config.protein.ligand)

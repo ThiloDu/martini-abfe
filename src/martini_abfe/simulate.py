@@ -149,7 +149,7 @@ async def simulate_ligand_in_solvent(
                 "other": lambda df: df[df["resname"] != "LIG"],
             },
         )
-        logger.debug("Created index file for %s: %s", info["name"], system_ndx)
+        logger.debug("Created index file for %s: %s", label, local_path(system_ndx))
     # Run minimization
     minimization = Simulation(
         sim_config[name].minimization,
@@ -275,7 +275,7 @@ async def simulate_ligand_with_protein(
         ligand_writer = mdtraj.formats.PDBTrajectoryFile(ligand_pdb, "w")
         ligand_writer.write(ligand_mol.xyz[0], ligand_mol.topology)
         ligand_writer.close()
-        logger.debug("Wrote ligand pdb file: %s", ligand_pdb)
+        logger.debug("Wrote ligand pdb file: %s", local_path(ligand_pdb))
         # Combine protein (including the dummy bead) and ligand into single pdb file, in
         # the order of the molecules in the topology
         protein_pdb = Path(sim_config.directory) / "protein-cg.pdb"
@@ -293,7 +293,9 @@ async def simulate_ligand_with_protein(
             protein_ligand_pdb_file.writelines(protein_pdb_lines)
             protein_ligand_pdb_file.writelines(ligand_pdb_lines)
             protein_ligand_pdb_file.write("TER\nEND\n")
-        logger.debug("Wrote combined protein-ligand pdb file: %s", protein_ligand_pdb)
+        logger.debug(
+            "Wrote combined protein-ligand pdb file: %s", local_path(protein_ligand_pdb)
+        )
     # Setup simulation box with COBY
     system_top = system_directory / "system.top"
     system_gro = system_directory / "system.gro"
@@ -356,7 +358,7 @@ async def simulate_ligand_with_protein(
                 ],
             },
         )
-        logger.debug("Created index file for %s: %s", info["name"], system_ndx)
+        logger.debug("Created index file for %s: %s", label, local_path(system_ndx))
     # Determine bead index which is closest to the ligand COM (for GROMACS pbc treatment)
     system = mdtraj.load(system_gro)
     ligand_indices = system.topology.select("resname LIG")
@@ -484,7 +486,9 @@ async def simulate_ligand_with_protein(
                             if current_sim_step >= n_wait_steps:
                                 break
                         except Exception:
-                            logger.debug("Could not read log file %s", log_file)
+                            logger.debug(
+                                "Could not read log file %s", local_path(log_file)
+                            )
                     await asyncio.sleep(5)
         if run_mode == "serial":
             # Create starting structure for next lambda step by selecting frame where
@@ -513,7 +517,7 @@ async def simulate_ligand_with_protein(
                 out_traj.close()
                 logger.debug(
                     "Created starting structure for next lambda step: %s",
-                    starting_config,
+                    local_path(starting_config),
                 )
     _log_production_summary(label, n_lambda, window_states, sim_config)
     if run_mode == "serial":

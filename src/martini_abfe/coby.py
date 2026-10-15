@@ -8,7 +8,7 @@ from pathlib import Path
 import COBY
 import numpy as np
 
-from .utils import get_molecule_name_from_itp
+from .utils import get_molecule_name_from_itp, local_path
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ def _write_topology(
         + "\n"
     )
     Path(system_top).write_text(topology, encoding="utf-8")
-    logger.debug("Wrote system topology: %s", system_top)
+    logger.debug("Wrote system topology: %s", local_path(system_top))
 
 
 def setup_solvent_box(
