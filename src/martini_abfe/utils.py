@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -115,6 +116,16 @@ def write_json_file(data: dict, json_file: Path, compact_lists: bool = False):
         else:
             json.dump(data, file, indent=4)
     logger.debug("Wrote data to JSON file %s", json_file)
+
+
+def local_path(path: str | Path) -> str:
+    """
+    Shorten a path for messages, relative to the working directory if it lies below it.
+    :param path: Path to shorten.
+    :return: Relative path, or the path unchanged if it lies outside the working directory.
+    """
+    relative = os.path.relpath(path)
+    return str(path) if relative.startswith("..") else relative
 
 
 def replace_in_file(file_path: Path, replacements: dict):

@@ -18,6 +18,7 @@ from MDAnalysis.lib.distances import minimize_vectors
 from pymbar.timeseries import statistical_inefficiency
 
 from .utils import (
+    local_path,
     read_json_file,
     write_json_file,
 )
@@ -55,7 +56,7 @@ def standard_state_correction(system_directory: Path) -> float | None:
         or settings.get("pull-coord1-type") not in supported_types
         or settings.get("pull-coord1-start", "no") != "no"
     ):
-        logger.warning("Unsupported pull setup in %s", mdp_file)
+        logger.warning("Unsupported pull setup in %s", local_path(mdp_file))
         return None
     K = float(settings.get("pull-coord1-k", 0.0))  # kJ/mol/nm^2
     flat_bottom = settings.get("pull-coord1-type") == "flat-bottom"
@@ -106,18 +107,23 @@ def flat_bottom_correction(system_directory: Path) -> tuple[float, float] | None
         or settings.get("pull-print-ref-value", "no") != "no"
         or settings.get("pull-print-components", "no") != "no"
     ):
-        logger.info("Unsupported pull setup in %s, no flat-bottom correction", mdp_file)
+        logger.info(
+            "Unsupported pull setup in %s, no flat-bottom correction",
+            local_path(mdp_file),
+        )
         return None
     radius = float(settings["pull-coord1-init"])
     # Fraction of the equilibrated bound-state samples that stay inside the flat bottom
     pull = np.loadtxt(px_file, comments=["#", "@"], ndmin=2)
     if pull.shape[0] < 2 or pull.shape[1] < 2:
-        logger.warning("No pull coordinate found in %s", px_file)
+        logger.warning("No pull coordinate found in %s", local_path(px_file))
         return None
     indicator = (pull[int(pull.shape[0] * 0.05) :, 1] <= radius).astype(float)
     inside = float(np.mean(indicator))
     if inside == 0.0:
-        logger.warning("No sample in %s stays inside the flat bottom", px_file)
+        logger.warning(
+            "No sample in %s stays inside the flat bottom", local_path(px_file)
+        )
         return None
     if inside == 1.0:
         return 0.0, 0.0
@@ -126,7 +132,7 @@ def flat_bottom_correction(system_directory: Path) -> tuple[float, float] | None
     uncertainty = np.sqrt((1 - inside) / (inside * n_eff))
     logger.info(
         "Flat-bottom correction for %s: %d/%d samples at the wall, %.0f effective",
-        system_directory,
+        local_path(system_directory),
         round((1 - inside) * len(indicator)),
         len(indicator),
         n_eff,
@@ -144,7 +150,9 @@ def run_mbar_calculations(
     :return: Free energy, its uncertainty and changes per lambda step, or None if not all
         lambda simulations are finished.
     """
-    logger.info("Running mbar calculations in directory: %s", system_directory)
+    logger.info(
+        "Running mbar calculations in directory: %s", local_path(system_directory)
+    )
     # Get list of xvg files and count of finished lambda simulations
     xvg_files = []
     count = 0
@@ -158,7 +166,7 @@ def run_mbar_calculations(
     if count == 0 or len(xvg_files) != count:
         logger.info(
             "Skipping free energy calculation for %s, found only %d/%d xvg files",
-            system_directory,
+            local_path(system_directory),
             len(xvg_files),
             count,
         )

@@ -19,6 +19,7 @@ from .utils import (
     check_file_exists,
     create_gromacs_index,
     get_n_lambda_steps_from_mdp,
+    local_path,
     read_json_file,
 )
 
@@ -160,7 +161,9 @@ async def simulate_ligand_in_solvent(
     )
     if not Path(minimization.out_coord).exists():
         logger.info(
-            "%s: running minimization (%s)", label, minimization.input_files["log"]
+            "%s: running minimization (%s)",
+            label,
+            local_path(minimization.input_files["log"]),
         )
         minimization.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Run equilibration
@@ -175,7 +178,9 @@ async def simulate_ligand_in_solvent(
     )
     if not Path(equilibration.out_coord).exists():
         logger.info(
-            "%s: running equilibration (%s)", label, equilibration.input_files["log"]
+            "%s: running equilibration (%s)",
+            label,
+            local_path(equilibration.input_files["log"]),
         )
         equilibration.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Determine number of lambda steps and copy simulation config file
@@ -369,7 +374,9 @@ async def simulate_ligand_with_protein(
     )
     if not Path(minimization.out_coord).exists():
         logger.info(
-            "%s: running minimization (%s)", label, minimization.input_files["log"]
+            "%s: running minimization (%s)",
+            label,
+            local_path(minimization.input_files["log"]),
         )
         minimization.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Run equilibration, with a copy of the mdp file as it is modified for the system
@@ -387,7 +394,9 @@ async def simulate_ligand_with_protein(
     if not Path(equilibration.out_coord).exists():
         equilibration.modify_mdp("pull-group1-pbcatom", closest_bead_idx)
         logger.info(
-            "%s: running equilibration (%s)", label, equilibration.input_files["log"]
+            "%s: running equilibration (%s)",
+            label,
+            local_path(equilibration.input_files["log"]),
         )
         equilibration.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Get production mdp file based on ligand properties
@@ -571,7 +580,7 @@ async def simulate_ligand(
                 "Simulation attempt %d/%d for %s in %s failed: %s",
                 attempt,
                 n_retries,
-                ligand_directory,
+                local_path(ligand_directory),
                 last_tried_system,
                 str(e),
             )

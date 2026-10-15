@@ -24,7 +24,7 @@ from .structure import (
     split_complex,
     write_ligand_gro,
 )
-from .utils import read_json_file
+from .utils import local_path, read_json_file
 
 logger = logging.getLogger("martini_abfe")
 
@@ -245,9 +245,10 @@ def run(
         if gromacs is not None:
             config.simulation.gromacs = gromacs
         if config.simulation.queue.type == "file":
+            queue_path = config.simulation.queue.path
             typer.echo(
-                f"Queueing {system.name} in {config.simulation.queue.path}, process it "
-                f"with: martini-abfe-queue -f {config.simulation.queue.path}"
+                f"Queueing {system.name} in {local_path(queue_path)}, process it "
+                f"with: martini-abfe-queue -f {local_path(queue_path)}"
             )
         tasks.append(simulate_ligand(ligand_directory=system, config=config))
 
