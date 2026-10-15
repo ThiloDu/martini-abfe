@@ -1,0 +1,73 @@
+; General setup
+integrator               = sd
+dt                       = 0.02
+nsteps                   = 2500000
+comm-mode                = Linear
+; Output
+nstxout                  = 0
+nstvout                  = 0
+nstfout                  = 0
+nstlog                   = 100000
+nstenergy                = 100000
+nstxout-compressed       = 2000
+; Non-bonded interactions
+verlet-buffer-tolerance  = -1
+nstlist                  = 20
+rlist                    = 1.35
+coulombtype              = Reaction-Field
+rcoulomb                 = 1.1
+epsilon-r                = 15
+epsilon-rf               = 0
+vdwtype                  = Cut-off
+vdw-modifier             = Potential-shift
+rvdw                     = 1.1
+periodic-molecules       = no
+; Temperature control
+tau-t                    = 2.0 2.0 2.0
+ref-t                    = 300 300 300
+tc-grps                  = other Protein ligand
+nsttcouple               = 20
+; Pressure control
+pcoupl                   = c-rescale
+pcoupltype               = isotropic
+tau-p                    = 4.0
+ref-p                    = 1.0
+compressibility          = 3e-4
+nstpcouple               = 20
+; Constraints
+continuation             = yes
+; Boundary conditions
+pbc                      = xyz
+; Constraints
+lincs-order              = 8
+lincs-iter               = 2
+lincs-warnangle          = 90
+; Free energy calculation
+free-energy              = yes
+couple-moltype           = ligand
+nstdhdl                  = 100
+sc-alpha                 = 0.5
+sc-power                 = 1
+sc-sigma                 = 0.3
+couple-intramol          = yes
+couple-lambda0           = vdw-q
+couple-lambda1           = none
+init-lambda-state        = 0
+coul-lambdas             = 0.00000 0.34184 0.64991 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000 1.00000
+vdw-lambdas              = 0.00000 0.00000 0.00000 0.00000 0.07649 0.15766 0.24300 0.32457 0.40059 0.47107 0.53420 0.58844 0.63299 0.67042 0.70407 0.73454 0.76536 0.79570 0.82775 0.86314 0.90293 0.94985 1.00000
+calc-lambda-neighbors    = -1
+; Group restraints
+pull                     = yes
+pull-nstxout             = 0
+pull-nstfout             = 0
+pull-ncoords             = 1
+pull-ngroups             = 2
+pull-group1-name         = ligand
+pull-group1-pbcatom      = 0
+pull-group2-name         = dummy
+pull-coord1-groups       = 2 1
+pull-coord1-geometry     = distance
+pull-coord1-type         = flat-bottom
+pull-coord1-k            = 2000
+pull-coord1-init         = 0.4
+pull-coord1-start        = no

@@ -1,0 +1,7 @@
+__pycache__/
+*.egg-info/
+.ruff_cache/
+simulation-queue.dat
+simulation-queue.dat.lock
+.stop-file
+systems/

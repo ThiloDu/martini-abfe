@@ -1,0 +1,23 @@
+# Settings overriding the defaults, passed with `martini-abfe prepare --config`.
+# Print all settings with `martini-abfe show-config`.
+simulation:
+  # Extra mdrun arguments for the locally run minimization and equilibration
+  gromacs: "-nt 8 -noddcheck -rdd 2.0"
+  queue:
+    type: file                  # 'file' (worker queue) or 'none' (run locally)
+    path: simulation-queue.dat  # resolved relative to the working directory
+  martini:                      # force field files, found via GMXLIB or absolute paths
+    topology: martini3.ff/martini.itp
+    solvents: martini3.ff/martini_solvents.itp
+    ions: martini3.ff/martini_ions.itp
+  protein:
+    chain: null                 # e.g. "A" or "A,B"; all chains are merged into one molecule
+    n_reruns: 3
+    martinize:
+      # mutate: "HIS320:HIS"    # any martinize2 option, true for flags
+      maxwarn: 4
+    dummy_bead:
+      n_virtual_sites: 8        # backbone beads defining the pocket reference
+      cutoff: 1.1               # nm around the ligand, increased if too few beads
+  water:
+    n_reruns: 2

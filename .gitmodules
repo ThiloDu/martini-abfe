@@ -1,0 +1,3 @@
+[submodule "external/OLIVES"]
+	path = external/OLIVES
+	url = https://github.com/Martini-Force-Field-Initiative/OLIVES.git

@@ -1,0 +1,45 @@
+; General setup
+integrator               = sd
+dt                       = 0.02
+nsteps                   = 40000
+comm-mode                = Linear
+; Output
+nstxout                  = 0
+nstvout                  = 0
+nstfout                  = 0
+nstlog                   = 0
+nstenergy                = 0
+nstxout-compressed       = 0
+; Non-bonded interactions
+verlet-buffer-tolerance  = -1
+nstlist                  = 20
+rlist                    = 1.35
+coulombtype              = Reaction-Field
+rcoulomb                 = 1.1
+epsilon-r                = 15
+epsilon-rf               = 0
+vdwtype                  = Cut-off
+vdw-modifier             = Potential-shift
+rvdw                     = 1.1
+; Temperature control
+tau-t                    = 2.0 2.0
+ref-t                    = 300 300
+tc-grps                  = other ligand
+nsttcouple               = 20
+; Pressure control
+pcoupl                   = c-rescale
+pcoupltype               = isotropic
+tau-p                    = 4.0
+ref-p                    = 1.0
+compressibility          = 3e-4
+nstpcouple               = 20
+refcoord-scaling         = com
+; Boundary conditions
+pbc                      = xyz
+; Initial velocities
+gen-vel                  = yes
+gen-temp                 = 300
+; Constraints
+lincs-order              = 8
+lincs-iter               = 2
+lincs-warnangle          = 90

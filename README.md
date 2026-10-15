@@ -1,0 +1,125 @@
+# martini-abfe
+
+Absolute protein-ligand binding free energies with the Martini 3 coarse-grained force field, for arbitrary protein-ligand systems.
+
+This is a generalized version of the protocol in [martini-protein-ligand-binding-free-energies](../martini-protein-ligand-binding-free-energies) (package `cgbfe`). That repository is tied to the OpenFE Industry Benchmark 2024. This one takes any system as input and leaves out the ligand parametrization. The simulation protocol, lambda schedules, restraints and free energy estimators are unchanged.
+
+## Input
+
+| Input              | Description                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| complex `.pdb`     | Atomistic structure of the ligand bound to the protein, e.g. a crystal structure    |
+| ligand residue     | Residue name of the ligand in the complex                                           |
+| ligand `.itp`      | Martini 3 topology of the ligand (a single molecule with explicit charges)          |
+| ligand `.gro`      | Coarse-grained structure of the ligand, beads in topology order                     |
+| `mapping.ndx`      | *Optional:* bead mapping, used to superimpose the CG ligand onto the crystal pose   |
+
+The ligand topology can use any molecule and residue names. They are renamed to `ligand` and `LIG`, the names that the mdp files and index groups refer to. Atom names in the structure are taken from the topology.
+
+## Installation
+
+```bash
+git clone --recurse-submodules <repository>
+pip install -e .
+```
+
+You also need these on your path:
+
+- GROMACS (`gmx`, and `gmx_mpi` for replica exchange)
+- [packmol](https://m3g.github.io/packmol) (builds the water box of the unbound leg)
+- `martinize2` and `insane`, which are installed as dependencies
+
+The Martini 3 force field files are included as `martini3.ff/martini.itp`, `martini3.ff/martini_solvents.itp` and `martini3.ff/martini_ions.itp`. These paths must be resolvable by `grompp`, either through `GMXLIB` or by setting absolute paths in the config (see below). The force field has to contain the bead types used by your ligand.
+
+The protein tertiary structure is kept with [OLIVES](https://github.com/Martini-Force-Field-Initiative/OLIVES), which is included as a submodule in `external/OLIVES`. You can point to another script with the environment variable `MARTINI_ABFE_OLIVES` or the config key `simulation.protein.olives`. To use an elastic network instead, set `olives: null` and add `elastic: true` to the martinize options.
+
+## Workflow
+
+### 1. Prepare the system
+
+```bash
+martini-abfe prepare \
+    --complex complex.pdb --ligand-resname LIG \
+    --itp ligand.itp --gro ligand.gro \
+    [--mapping mapping.ndx] [--config my-config.yaml] \
+    -o systems/my-system
+```
+
+This creates the system directory and performs these steps:
+
+1. Splits the complex into `protein.pdb` and `ligand-aa.pdb`. If the ligand residue occurs several times, select one copy with `--ligand-chain` and `--ligand-resid`.
+2. Copies the ligand topology to `ligand.itp` and places the CG ligand at the crystal pose in `ligand.gro`. How it is placed depends on `--orient`:
+   - `mapping` (default with `--mapping`): superimposes the beads onto the centers of their mapped atoms. The indices are 1-based and refer to the ligand atoms in the order they appear in the complex. Indices beyond the structure (e.g. missing hydrogens) are ignored.
+   - `auto` (default without a mapping): fits the orientation of the CG ligand to the shape of the atomistic ligand.
+   - `none`: only moves the CG centroid to the atomistic center of mass.
+3. Coarse-grains the protein with martinize2 and OLIVES. All atoms other than `ATOM` records (waters, ions, cofactors) are removed. Only the first model and alternate location are kept. Multiple chains are merged into a single molecule; `--chain A,B` keeps only some of them.
+4. Adds the pocket reference bead `DUM` at the ligand center of mass. It is a virtual site of the 8 backbone beads around the pocket that are spread farthest apart. If fewer than 8 beads lie within 1.1 nm, the cutoff is increased automatically.
+5. Writes the full configuration to `config.yaml` in the system directory.
+
+Check `protein-cg.pdb` and `ligand.gro` before running, e.g. in VMD. The summary printed by `prepare` gives the distance between the reference bead and the ligand center. It should be close to zero.
+
+### 2. Run the simulations
+
+```bash
+martini-abfe run systems/my-system [systems/other-system ...]
+```
+
+Each system is simulated in two legs:
+
+- **`protein`** (3 repeats): the ligand is decoupled in the pocket and kept there by a flat-bottom restraint (0.4 nm) to the reference bead.
+- **`water`** (2 repeats): the ligand is decoupled in 0.15 M NaCl.
+
+Charged ligands use the schedules with separate Coulomb decoupling. Minimization and equilibration run locally. The lambda windows are appended to a file queue, and `run` waits until they are finished. Start one worker per machine to process the queue:
+
+```bash
+martini-abfe-queue -f simulation-queue.dat --replex 1000 --n-gpus 2 --extra "-nt 8"
+```
+
+Without `--replex`, the windows run one by one, without replica exchange. To run everything locally without a queue, use `martini-abfe run --queue none ...`.
+
+Runs can be resumed: finished steps are skipped when `run` is called again.
+
+### 3. Analyze
+
+`run` computes the free energies at the end. For systems run elsewhere, compute them with:
+
+```bash
+martini-abfe analyze systems/*/
+```
+
+The results are stored in each system directory:
+
+- `info.json`: decoupling free energy of each leg and repeat, including the restraint and standard state corrections of the bound leg.
+- `binding.json`: the binding free energy, ΔG_bind = ΔG_water − ΔG_protein, in kcal/mol. Its error is the standard error over repeats.
+
+## Configuration
+
+`martini-abfe show-config` prints all settings. Pass a YAML file with the settings to change to `prepare --config` (see [examples/config.yaml](examples/config.yaml)). Common changes are:
+
+- `gromacs`: mdrun arguments for minimization and equilibration
+- `martini`: force field paths
+- `protein.martinize`: any martinize2 option, e.g. `mutate: "HIS320:HIS"`
+- `protein.n_reruns`, `water.n_reruns`: number of repeats
+- `protein.dummy_bead`: construction of the reference bead
+- `*.production`, `*.production_charged`: mdp files, for other lambda schedules
+
+The default mdp files are in [src/martini_abfe/mdps](src/martini_abfe/mdps).
+
+## System directory
+
+| File                                  | Content                                                     |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `config.yaml`                         | Complete configuration of the system                        |
+| `complex.pdb`, `protein.pdb`, `ligand-aa.pdb` | Input complex and its split parts                   |
+| `ligand.itp`, `ligand.gro`            | CG ligand, placed in the pocket                             |
+| `protein-cg.pdb`, `protein.itp`       | CG protein with the reference bead                          |
+| `protein_info.json`                   | Protein charge, ligand center, reference bead definition    |
+| `info.json`, `binding.json`           | Ligand info and free energies                               |
+| `protein-r*/`, `water-r*/`            | Simulations of every leg and repeat, one `lambda-*` folder per window |
+
+## Limitations
+
+- Cofactors, metal ions and crystal waters are removed from the protein. Systems that need them in the pocket are not supported.
+- Only one ligand can be bound. Other copies of the ligand residue are removed with the remaining non-protein atoms.
+- The reference bead requires the ligand to be enclosed by protein backbone. `prepare` warns if the virtual site cannot reach the ligand center.
+- The lambda schedules were optimized on the drug-like ligands of the OpenFE benchmark set. For very different ligands, check the overlap between neighboring windows.

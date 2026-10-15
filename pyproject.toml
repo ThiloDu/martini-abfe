@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "martini-abfe"
+version = "0.1.0"
+description = "Coarse-grained absolute protein-ligand binding free energies with Martini 3 for arbitrary systems"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Thilo Duve", email = "duve@fias.uni-frankfurt.de"},
+]
+dependencies = [
+    "alchemlyb==2.5.0",
+    "insane==1.2.0",
+    "MDAnalysis>=2.9",
+    "mdtraj",
+    "numpy",
+    "omegaconf",
+    "pandas",
+    "pymbar>=4.0",
+    "scipy",
+    "setuptools<81",  # insane imports pkg_resources
+    "typer",
+    "vermouth>=0.14",
+]
+
+[project.scripts]
+martini-abfe = "martini_abfe.cli:app"
+martini-abfe-queue = "martini_abfe.file_queue:run_simulations_from_queue"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+martini_abfe = ["mdps/*.mdp"]
+
+[tool.ruff]
+extend-exclude = ["external"]
