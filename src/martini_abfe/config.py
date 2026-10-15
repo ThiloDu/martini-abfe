@@ -39,9 +39,9 @@ def default_config() -> DictConfig:
                     "readd": False,
                 },
                 "martini": {
-                    "topology": "martini3.ff/martini.itp",
-                    "solvents": "martini3.ff/martini_solvents.itp",
-                    "ions": "martini3.ff/martini_ions.itp",
+                    "topology": "/mnt/plutus/tduve/forcefields/1_martini_v3.0.0/martini_v3.0.0.itp",
+                    "solvents": "/mnt/plutus/tduve/forcefields/1_martini_v3.0.0/martini_v3.0.0_solvents_v1.itp",
+                    "ions": "/mnt/plutus/tduve/forcefields/1_martini_v3.0.0/martini_v3.0.0_ions_v1.itp",
                 },
                 "protein": {
                     "file": None,
@@ -63,7 +63,7 @@ def default_config() -> DictConfig:
                         "maxwarn": 4,
                     },
                     "n_reruns": 3,
-                    "olives": default_olives_script(),
+                    "olives": "auto",
                     "box_margin": 2.1,
                     "salt": 0.15,
                     "neutralize": True,

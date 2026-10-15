@@ -37,7 +37,7 @@ simulation:
 
 The force field has to contain the bead types used by your ligand, and the molecules `W`, `NA` and `CL`.
 
-The protein tertiary structure is kept with [OLIVES](https://github.com/Martini-Force-Field-Initiative/OLIVES), which is included as a submodule in `external/OLIVES`. You can point to another script with the environment variable `MARTINI_ABFE_OLIVES` or the config key `simulation.protein.olives`. To use an elastic network instead, set `olives: null` and add `elastic: true` to the martinize options.
+The protein tertiary structure is kept with [OLIVES](https://github.com/Martini-Force-Field-Initiative/OLIVES), which is included as a submodule in `external/OLIVES`. It is found relative to the source tree, so install the package in editable mode (`pip install -e .`). With a regular install, or to use another script, set the environment variable `MARTINI_ABFE_OLIVES` or the config key `simulation.protein.olives` to the script. `prepare` stops with an error if no script is found. To use an elastic network instead, set `olives: null` and add `elastic: true` to the martinize options.
 
 ## Workflow
 

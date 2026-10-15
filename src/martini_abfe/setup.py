@@ -13,6 +13,7 @@ from omegaconf import ListConfig, OmegaConf
 from scipy.optimize import minimize
 from scipy.spatial.distance import cdist
 
+from .config import default_olives_script
 from .utils import (
     FileUpdater,
     check_file_exists,
@@ -324,6 +325,15 @@ def setup_protein_structure(config: OmegaConf):
         logger.debug("Moved itp file to %s", output_itp)
     # Run OLIVES if specified in config
     olives = sim_config.protein.get("olives", None)
+    if olives == "auto":
+        olives = default_olives_script()
+        if olives is None:
+            raise FileNotFoundError(
+                "OLIVES script not found. Install martini-abfe in editable mode "
+                "(pip install -e .) from a clone with the external/OLIVES submodule, "
+                "set MARTINI_ABFE_OLIVES or simulation.protein.olives to the script, "
+                "or set olives to null to run without OLIVES (e.g. with elastic: true)."
+            )
     if olives:
         if not Path(olives).exists():
             raise FileNotFoundError(f"OLIVES script {olives} not found.")
