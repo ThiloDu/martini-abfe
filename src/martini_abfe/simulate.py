@@ -12,7 +12,7 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
 from .free_energies import calculate_free_energies
-from .packmol import setup_solvent_box
+from .coby import setup_solvent_box
 from .simulation import Simulation
 from .utils import (
     check_file_exists,
@@ -71,7 +71,7 @@ async def simulate_ligand_in_solvent(
     # Setup system directory
     system_directory = ligand_directory / key
     system_directory.mkdir(parents=True, exist_ok=True)
-    # Setup simulation box with packmol
+    # Setup simulation box with COBY
     system_top = system_directory / "system.top"
     system_gro = system_directory / "system.gro"
     if not system_top.exists() or not system_gro.exists():
@@ -95,7 +95,7 @@ async def simulate_ligand_in_solvent(
         check_file_exists(
             system_top,
             system_gro,
-            message="packmol did not produce expected output files.",
+            message="COBY did not produce expected output files.",
         )
     # Create index file
     system_ndx = system_directory / "system.ndx"

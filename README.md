@@ -25,9 +25,8 @@ pip install -e .
 
 You also need these on your path:
 
-- GROMACS (`gmx`, and `gmx_mpi` for replica exchange)
-- [packmol](https://m3g.github.io/packmol) (builds the water box of the unbound leg)
-- `martinize2` and `insane`, which are installed as dependencies
+- GROMACS, built with MPI (`gmx_mpi`). Thread counts are set with `-ntomp`, as `-nt` only exists in thread-MPI builds.
+- `martinize2`, `insane` and [COBY](https://github.com/MikkelDA/COBY) (builds the water box of the unbound leg), which are installed as dependencies
 
 The Martini 3 force field files are included as `martini3.ff/martini.itp`, `martini3.ff/martini_solvents.itp` and `martini3.ff/martini_ions.itp`. These paths must be resolvable by `grompp`, either through `GMXLIB` or by setting absolute paths in the config (see below). The force field has to contain the bead types used by your ligand.
 
@@ -72,7 +71,7 @@ Each system is simulated in two legs:
 Charged ligands use the schedules with separate Coulomb decoupling. Minimization and equilibration run locally. The lambda windows are appended to a file queue, and `run` waits until they are finished. Start one worker per machine to process the queue:
 
 ```bash
-martini-abfe-queue -f simulation-queue.dat --replex 1000 --n-gpus 2 --extra "-nt 8"
+martini-abfe-queue -f simulation-queue.dat --replex 1000 --n-gpus 2 --extra "-ntomp 8"
 ```
 
 Without `--replex`, the windows run one by one, without replica exchange. To run everything locally without a queue, use `martini-abfe run --queue none ...`.

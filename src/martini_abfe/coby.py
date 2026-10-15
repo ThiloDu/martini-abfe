@@ -1,10 +1,11 @@
-"""Build packmol-packed solvent boxes (e.g. octanol/water) around a ligand for Martini 3."""
+"""Build COBY solvent boxes (e.g. water or octanol/water) around a ligand for Martini 3."""
 
 import logging
+import shutil
 import tempfile
 from pathlib import Path
-from subprocess import run
 
+import COBY
 import numpy as np
 
 from .utils import get_molecule_name_from_itp
@@ -12,33 +13,12 @@ from .utils import get_molecule_name_from_itp
 logger = logging.getLogger(__name__)
 
 
-# Single-molecule templates: residue name -> list of (atom name, xyz in Angstrom).
-SOLVENT_TEMPLATES = {
-    "W": [("W", (0.0, 0.0, 0.0))],
-    "OCO": [("C1", (0.0, 0.0, 0.0)), ("C2", (3.9, 0.0, 0.0)), ("PC", (7.4, 0.0, 0.0))],
-    "NA": [("NA", (0.0, 0.0, 0.0))],
-    "CL": [("CL", (0.0, 0.0, 0.0))],
-}
-# Average molecular volume (nm^3) per solvent bead, used to estimate molecule counts.
+# Definitions of solvents missing from the COBY library, e.g. octanol (OCO).
+SOLVENT_LIBRARY = Path(__file__).parent / "coby_solvents.py"
+# Average molecular volume (nm^3) per solvent molecule, used to estimate molecule counts.
 MOLECULAR_VOLUMES = {"W": 0.120, "OCO": 0.262}
-# Ion pairs per nm^3 at 1 mol/L (Avogadro * 1e-24 L/nm^3), for salt-concentration counts.
+# Molecules per nm^3 at 1 mol/L (Avogadro * 1e-24 L/nm^3).
 IONS_PER_NM3_PER_MOLAR = 0.6022
-
-
-def _template_pdb(resname: str) -> str:
-    """
-    Build a one-molecule pdb string for a residue from its template.
-    :param resname: Residue name of the solvent molecule.
-    :return: Content of a pdb file holding the single molecule.
-    """
-    lines = []
-    for serial, (name, (x, y, z)) in enumerate(SOLVENT_TEMPLATES[resname], start=1):
-        name_field = f" {name:<3}" if len(name) < 4 else name[:4]
-        lines.append(
-            f"ATOM  {serial:>5} {name_field}{resname:>4} A{1:>4}    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00"
-        )
-    return "\n".join(lines) + "\nEND\n"
 
 
 def _solute_diameter(gro_file: Path) -> float:
@@ -56,6 +36,24 @@ def _solute_diameter(gro_file: Path) -> float:
     return 2.0 * np.max(np.sum((coords - center) ** 2, axis=1)) ** 0.5
 
 
+def _read_molecule_counts(top_file: Path) -> dict[str, int]:
+    """
+    Read the molecule counts from the [ molecules ] section of a topology.
+    :param top_file: Topology file written by COBY.
+    :return: Mapping of molecule name -> count, in topology order.
+    """
+    counts, in_molecules = {}, False
+    with open(top_file, "r", encoding="utf-8") as top:
+        for line in top:
+            line = line.split(";")[0].strip()
+            if line.startswith("["):
+                in_molecules = line.replace(" ", "") == "[molecules]"
+            elif in_molecules and line:
+                name, count = line.split()[:2]
+                counts[name] = counts.get(name, 0) + int(count)
+    return counts
+
+
 def setup_solvent_box(
     ligand_gro: Path,
     ligand_top: Path,
@@ -66,118 +64,73 @@ def setup_solvent_box(
     include_lines: list[str],
     mixture: dict[str, float],
     salt_concentration: float = 0.0,
-    packmol_bin: str = "packmol",
-    gmx_bin: str = "gmx",
-    density_fill: float = 0.85,
-    tolerance: float = 2.5,
-    edge_buffer: float = 0.2,
     seed: int = 12345,
 ) -> dict[str, int]:
     """
-    Build a solvent box around a ligand fixed at the box center and write its topology.
-    Solvent counts are estimated to roughly fill the box, i.e. an equilibration is
-    required to compress it to the correct density.
+    Build a solvent box around a ligand at the box center with COBY and write its
+    topology. The solvent is inserted at its equilibrium density, but an equilibration is
+    still required to relax the packing.
     :param ligand_gro: Ligand coordinate input file (.gro).
     :param ligand_top: Ligand topology (.itp), used to read the moleculetype name.
     :param system_gro: Output system coordinate file (.gro).
     :param system_top: Output system topology file (.top).
-    :param box_margin: Minimum distance (nm) between ligand and box edge.
+    :param box_margin: Distance (nm) added to the ligand diameter for the box edge.
     :param charge: Net ligand charge; neutralizing counter-ions are added.
     :param include_lines: Formatted `#include "..."` lines for the topology
-    :param mixture: Solvent composition as residue name to relative bead fraction, e.g.
-        {"W": 1.0} for water or {"OCO": 0.92, "W": 0.08} for water-saturated octanol.
+    :param mixture: Solvent composition as residue name to relative molecule fraction,
+        e.g. {"W": 1.0} for water or {"OCO": 0.92, "W": 0.08} for water-saturated octanol.
     :param salt_concentration: NaCl concentration (mol/L) added on top of the
-        charge-neutralizing counter-ions, based on the final box volume.
-    :param packmol_bin: Path to the packmol executable, defaults to "packmol".
-    :param gmx_bin: Path to the GROMACS executable (for pdb<->gro conversion), defaults to "gmx".
-    :param density_fill: Fraction of the equilibrium density to pack at (<1 leaves
-        headroom so packmol converges and NPT can compress the box).
-    :param tolerance: packmol minimum inter-molecular distance (Angstrom).
-    :param edge_buffer: Margin (nm) kept between solvent and the box edges.
-    :param seed: Random seed for reproducible packing.
+        charge-neutralizing counter-ions, based on the box volume.
+    :param seed: Random seed for reproducible insertion.
     :return: Mapping of residue name -> molecule count actually placed.
     """
+    unknown = [res for res in mixture if res not in MOLECULAR_VOLUMES]
+    if unknown:
+        raise ValueError(f"No molecular volume defined for solvent {unknown}.")
     # Cubic box edge = solute diameter + box_margin.
     box_length = _solute_diameter(ligand_gro) + box_margin
-    # Normalize the bead fractions and estimate counts from box volume and mean bead volume.
+    # Molarity of solvent molecules from the mean molecular volume of the mixture. The
+    # mapping ratio is disabled, so COBY counts CG molecules and treats the fractions
+    # as molecule ratios.
     total_fraction = sum(mixture.values())
     fractions = {res: frac / total_fraction for res, frac in mixture.items()}
     avg_volume = sum(frac * MOLECULAR_VOLUMES[res] for res, frac in fractions.items())
-    n_total = density_fill * box_length**3 / avg_volume
-    composition = {res: round(frac * n_total) for res, frac in fractions.items()}
-    # Add NaCl at the requested molarity, then neutralize the ligand charge.
-    n_salt = round(salt_concentration * box_length**3 * IONS_PER_NM3_PER_MOLAR)
-    n_na = n_salt + max(-charge, 0)
-    n_cl = n_salt + max(charge, 0)
-    if n_na > 0:
-        composition["NA"] = n_na
-    if n_cl > 0:
-        composition["CL"] = n_cl
+    solvent_molarity = 1.0 / (avg_volume * IONS_PER_NM3_PER_MOLAR)
+    solvents = " ".join(f"solv:{res}:{frac:.6f}" for res, frac in fractions.items())
+    molecule_name = get_molecule_name_from_itp(ligand_top)
     logger.debug(
-        "Solvent box for charge %s: L=%.2f nm, composition=%s",
+        "Solvent box for charge %s: L=%.2f nm, mixture=%s, salt=%s M",
         charge,
         box_length,
-        composition,
+        fractions,
+        salt_concentration,
     )
-    # Determine the box limits for packmol in Angstrom
-    length_a, buffer_a = box_length * 10.0, edge_buffer * 10.0
-    lo, hi = buffer_a, length_a - buffer_a
-    center = length_a / 2.0
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        ligand_pdb, packed_pdb = tmp / "ligand.pdb", tmp / "packed.pdb"
-        # packmol works with pdb files, so convert the ligand gro to pdb first
-        run(
-            f"{gmx_bin} editconf -f {ligand_gro} -o {ligand_pdb}",
-            shell=True,
-            check=True,
+        coby_gro, coby_top = tmp / "system.gro", tmp / "system.top"
+        # The ligand charge is given explicitly, so the counter-ions follow the
+        # 'neutralize' setting instead of the topology
+        COBY.COBY(
+            box=[box_length] * 3,
+            box_type="rectangular",
+            import_library=str(SOLVENT_LIBRARY),
+            protein=f"file:{ligand_gro} moleculetypes:{molecule_name} charge:{charge}",
+            solvation=(
+                f"{solvents} pos:NA neg:CL salt_molarity:{salt_concentration} "
+                f"ionsvol:box mapping:False solv_molarity:{solvent_molarity:.4f}"
+            ),
+            out_gro=str(coby_gro),
+            out_top=str(coby_top),
+            rand=seed,
+            verbose=0,
         )
-        # Build the packmol input
-        blocks = [
-            f"tolerance {tolerance}",
-            f"seed {seed}",
-            f"output {packed_pdb}",
-            "filetype pdb",
-            "",
-            f"structure {ligand_pdb}",
-            "  number 1",
-            "  center",
-            f"  fixed {center:.3f} {center:.3f} {center:.3f} 0. 0. 0.",
-            "end structure",
-            "",
-        ]
-        for resname, count in composition.items():
-            if count <= 0:
-                continue
-            if resname not in SOLVENT_TEMPLATES:
-                raise ValueError(
-                    f"No packmol template defined for residue '{resname}'."
-                )
-            template_pdb = tmp / f"{resname}.pdb"
-            template_pdb.write_text(_template_pdb(resname), encoding="utf-8")
-            blocks += [
-                f"structure {template_pdb}",
-                f"  number {count}",
-                f"  inside box {lo:.3f} {lo:.3f} {lo:.3f} {hi:.3f} {hi:.3f} {hi:.3f}",
-                "end structure",
-                "",
-            ]
-        packmol_input = tmp / "packmol.inp"
-        packmol_input.write_text("\n".join(blocks), encoding="utf-8")
-        # packmol reads its directives from stdin.
-        with open(packmol_input, "r", encoding="utf-8") as inp_file:
-            run(packmol_bin, stdin=inp_file, shell=True, check=True)
-        if not packed_pdb.exists():
-            raise RuntimeError(f"packmol did not produce expected output: {packed_pdb}")
-        # Convert the packed pdb back to gro format
-        run(
-            f"{gmx_bin} editconf -f {packed_pdb} -o {system_gro} "
-            f"-box {box_length:.3f} {box_length:.3f} {box_length:.3f} -noc",
-            shell=True,
-            check=True,
-        )
+        if not coby_gro.exists() or not coby_top.exists():
+            raise RuntimeError(f"COBY did not produce expected output in {tmp}")
+        shutil.copy(coby_gro, system_gro)
+        composition = _read_molecule_counts(coby_top)
+    composition.pop(molecule_name, None)
     # Write the topology file with the included lines and molecule counts
-    molecule_lines = [f"{get_molecule_name_from_itp(ligand_top):<6} 1"]
+    molecule_lines = [f"{molecule_name:<6} 1"]
     molecule_lines += [
         f"{resname:<6} {count}" for resname, count in composition.items() if count > 0
     ]

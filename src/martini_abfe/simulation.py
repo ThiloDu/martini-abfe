@@ -84,11 +84,11 @@ class Simulation:
     def prepare(self):
         """
         Prepare the GROMACS simulation by creating the TPR file. This method runs the
-        'gmx grompp' command with the provided input files and simulation parameters.
+        'gmx_mpi grompp' command with the provided input files and simulation parameters.
         """
         maxwarn = self.simulation_kwargs.get("maxwarn", 1)
         command = (
-            f"gmx grompp -f {self.input_files['mdp']} -c {self.input_files['gro']} "
+            f"gmx_mpi grompp -f {self.input_files['mdp']} -c {self.input_files['gro']} "
             + f"-p {self.input_files['top']} -o {self.input_files['tpr']} "
             + f"-po {self.input_files['tpr'].replace('tpr', 'out.mdp')} -maxwarn {maxwarn}"
         )
@@ -110,7 +110,7 @@ class Simulation:
         extra_args: str = "",
     ):
         """
-        Run the simulation with 'gmx mdrun'. If a queue system is specified in the simulation
+        Run the simulation with 'gmx_mpi mdrun'. If a queue system is specified in the simulation
         configuration, the simulation is added to that queue instead of running locally.
         :param ignore_queue: If True, run locally even if a queue system is configured.
         :param blocking: If True, wait for the simulation to finish before returning. Only
@@ -128,7 +128,7 @@ class Simulation:
                 logger.warning("Local simulations are always blocking.")
             # Pull output names as in the queue runner, read by the restraint correction
             command = (
-                f"gmx mdrun -deffnm {filename} -px {filename}.px.xvg "
+                f"gmx_mpi mdrun -deffnm {filename} -px {filename}.px.xvg "
                 f"-pf {filename}.pf.xvg {extra_args}"
             )
             if "log" in self.input_files.keys() and ">>" not in command:

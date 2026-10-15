@@ -32,7 +32,7 @@ def default_config() -> DictConfig:
         {
             "simulation": {
                 "directory": None,
-                "gromacs": "-nt 2 -noddcheck -rdd 2.0",
+                "gromacs": "-ntomp 2 -noddcheck -rdd 2.0",
                 "queue": {
                     "type": "file",
                     "path": "simulation-queue.dat",

@@ -243,7 +243,7 @@ def run_single_simulations(
                 print(f"{time} Running task: {task_name}")
                 # Setup GROMACS command
                 command = (
-                    f'gmx mdrun -deffnm "{basename}" -px "{basename}.px.xvg" '
+                    f'gmx_mpi mdrun -deffnm "{basename}" -px "{basename}.px.xvg" '
                     + f'-pf "{basename}.pf.xvg" {extra} >> "{basename}.run.log" 2>&1'
                 )
                 # Run command

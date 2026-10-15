@@ -2,7 +2,7 @@
 # Print all settings with `martini-abfe show-config`.
 simulation:
   # Extra mdrun arguments for the locally run minimization and equilibration
-  gromacs: "-nt 8 -noddcheck -rdd 2.0"
+  gromacs: "-ntomp 8 -noddcheck -rdd 2.0"
   queue:
     type: file                  # 'file' (worker queue) or 'none' (run locally)
     path: simulation-queue.dat  # resolved relative to the working directory

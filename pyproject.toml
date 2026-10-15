@@ -13,7 +13,9 @@ authors = [
 ]
 dependencies = [
     "alchemlyb==2.5.0",
+    "COBY>=1.0.15",
     "insane==1.2.0",
+    "matplotlib",  # imported by COBY but not declared
     "MDAnalysis>=2.9",
     "mdtraj",
     "numpy",
