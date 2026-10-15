@@ -2,7 +2,7 @@
 
 Absolute protein-ligand binding free energies with the Martini 3 coarse-grained force field, for arbitrary protein-ligand systems.
 
-This is a generalized version of the protocol in [martini-protein-ligand-binding-free-energies](../martini-protein-ligand-binding-free-energies) (package `cgbfe`). That repository is tied to the OpenFE Industry Benchmark 2024. This one takes any system as input and leaves out the ligand parametrization. The simulation protocol, lambda schedules, restraints and free energy estimators are unchanged.
+This is a generalized version of the protocol in [martini-protein-ligand-binding-free-energies](../martini-protein-ligand-binding-free-energies) (package `cgbfe`). That repository is tied to the OpenFE Industry Benchmark 2024. This one takes any system as input and leaves out the ligand parametrization. The simulation protocol, lambda schedules, restraints and free energy estimators are unchanged. The simulation boxes of both legs are built with [COBY](https://github.com/MikkelDA/COBY) instead of insane and packmol.
 
 ## Input
 
@@ -23,12 +23,19 @@ git clone --recurse-submodules <repository>
 pip install -e .
 ```
 
-You also need these on your path:
+`pip` installs martinize2 (vermouth) and COBY, which builds the solvated boxes of both legs. In addition, you need GROMACS built with MPI, with `gmx_mpi` on your path. It is used for all GROMACS commands, including replica exchange. Set thread counts with `-ntomp`, since `-nt` only exists in thread-MPI builds. An explicit `-ntomp` takes precedence over `OMP_NUM_THREADS`, which is removed from the environment of these commands.
 
-- GROMACS, built with MPI (`gmx_mpi`). Thread counts are set with `-ntomp`, as `-nt` only exists in thread-MPI builds.
-- `martinize2` and [COBY](https://github.com/MikkelDA/COBY) (builds the solvated boxes of both legs), which are installed as dependencies
+The Martini 3 force field is not included. By default, the topologies include `martini3.ff/martini.itp`, `martini3.ff/martini_solvents.itp` and `martini3.ff/martini_ions.itp`, which `grompp` must find through `GMXLIB`. Alternatively, set absolute paths in the config:
 
-The Martini 3 force field files are included as `martini3.ff/martini.itp`, `martini3.ff/martini_solvents.itp` and `martini3.ff/martini_ions.itp`. These paths must be resolvable by `grompp`, either through `GMXLIB` or by setting absolute paths in the config (see below). The force field has to contain the bead types used by your ligand.
+```yaml
+simulation:
+  martini:
+    topology: /path/to/martini_v3.0.0.itp
+    solvents: /path/to/martini_v3.0.0_solvents_v1.itp
+    ions: /path/to/martini_v3.0.0_ions_v1.itp
+```
+
+The force field has to contain the bead types used by your ligand, and the molecules `W`, `NA` and `CL`.
 
 The protein tertiary structure is kept with [OLIVES](https://github.com/Martini-Force-Field-Initiative/OLIVES), which is included as a submodule in `external/OLIVES`. You can point to another script with the environment variable `MARTINI_ABFE_OLIVES` or the config key `simulation.protein.olives`. To use an elastic network instead, set `olives: null` and add `elastic: true` to the martinize options.
 
@@ -68,6 +75,8 @@ Each system is simulated in two legs:
 - **`protein`** (3 repeats): the ligand is decoupled in the pocket and kept there by a flat-bottom restraint (0.4 nm) to the reference bead.
 - **`water`** (2 repeats): the ligand is decoupled in 0.15 M NaCl.
 
+COBY places the solute at the center of a cubic box, with an edge of the solute diameter plus `box_margin`. The box is filled with water at its equilibrium density and with 0.15 M NaCl plus counter-ions for the net charge (`neutralize: false` adds none).
+
 Charged ligands use the schedules with separate Coulomb decoupling. Minimization and equilibration run locally. The lambda windows are appended to a file queue, and `run` waits until they are finished. Start one worker per machine to process the queue:
 
 ```bash
@@ -76,7 +85,9 @@ martini-abfe-queue -f simulation-queue.dat --replex 1000 --n-gpus 2 --extra "-nt
 
 Without `--replex`, the windows run one by one, without replica exchange. To run everything locally without a queue, use `martini-abfe run --queue none ...`.
 
-Runs can be resumed: finished steps are skipped when `run` is called again.
+`run` logs what it is doing for each system and leg: box setup, minimization and equilibration (with their log files), the number of queued lambda windows and how many of them are finished. Use `martini-abfe -v run ...` for debug output.
+
+Runs can be resumed: finished steps are skipped when `run` is called again. To rebuild a leg, e.g. after changing the force field paths, delete its directory (`protein-r1/`).
 
 ### 3. Analyze
 
@@ -95,8 +106,9 @@ The results are stored in each system directory:
 
 `martini-abfe show-config` prints all settings. Pass a YAML file with the settings to change to `prepare --config` (see [examples/config.yaml](examples/config.yaml)). Common changes are:
 
-- `gromacs`: mdrun arguments for minimization and equilibration
+- `gromacs`: mdrun arguments for minimization and equilibration, e.g. `-ntomp 8 -noddcheck -rdd 2.0`
 - `martini`: force field paths
+- `protein.box_margin`, `water.box_margin`, `*.salt`, `*.neutralize`: box size, NaCl concentration and counter-ions
 - `protein.martinize`: any martinize2 option, e.g. `mutate: "HIS320:HIS"`
 - `protein.n_reruns`, `water.n_reruns`: number of repeats
 - `protein.dummy_bead`: construction of the reference bead
