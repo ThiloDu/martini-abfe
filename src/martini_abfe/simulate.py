@@ -5,21 +5,21 @@ import logging
 import shutil
 import warnings
 from pathlib import Path
-from subprocess import CalledProcessError, run
+from subprocess import CalledProcessError
+from time import monotonic
 
 import mdtraj
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
+from .coby import setup_protein_box, setup_solvent_box
 from .free_energies import calculate_free_energies
-from .coby import setup_solvent_box
 from .simulation import Simulation
 from .utils import (
     check_file_exists,
     create_gromacs_index,
     get_n_lambda_steps_from_mdp,
     read_json_file,
-    replace_in_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,48 @@ def rerun_keys(sim_config: OmegaConf, name: str) -> list[str]:
     if n_reruns > 1:
         return [f"{name}-r{rerun + 1}" for rerun in range(n_reruns)]
     return [name]
+
+
+def _format_counts(composition: dict[str, int]) -> str:
+    """
+    Format molecule counts for the log, e.g. 'W=1354, NA=15, CL=16'.
+    :param composition: Mapping of residue name -> molecule count.
+    :return: Comma separated counts.
+    """
+    return ", ".join(f"{res}={count}" for res, count in composition.items())
+
+
+def _log_production_start(label: str, step: int, n_lambda: int, sim_config: OmegaConf):
+    """
+    Log a lambda window that is run locally, queued windows are only summarized.
+    :param label: System and leg, e.g. '1_cis/protein-r1'.
+    :param step: Index of the lambda window.
+    :param n_lambda: Number of lambda windows.
+    :param sim_config: Simulation configuration.
+    """
+    if sim_config.queue.type == "none":
+        logger.info("%s: running lambda window %d/%d", label, step + 1, n_lambda)
+    else:
+        logger.debug("%s: queueing lambda window %d/%d", label, step + 1, n_lambda)
+
+
+def _log_production_summary(
+    label: str, n_lambda: int, window_states: dict[str, int], sim_config: OmegaConf
+):
+    """
+    Log how many lambda windows were submitted, were already queued or are finished.
+    :param label: System and leg, e.g. '1_cis/protein-r1'.
+    :param n_lambda: Number of lambda windows.
+    :param window_states: Number of windows per state.
+    :param sim_config: Simulation configuration.
+    """
+    action = "run" if sim_config.queue.type == "none" else "queued"
+    states = ", ".join(
+        f"{count} {action if state == 'submitted' else state}"
+        for state, count in window_states.items()
+        if count > 0
+    )
+    logger.info("%s: %d lambda windows (%s)", label, n_lambda, states)
 
 
 async def simulate_ligand_in_solvent(
@@ -61,13 +103,8 @@ async def simulate_ligand_in_solvent(
     if key in info:
         logger.info("Skipping %s simulation for %s, already exists", key, info["name"])
         return
-    logger.debug(
-        "Simulating ligand %s with charge %s in %s in directory: %s",
-        info["name"],
-        info["charge"],
-        key,
-        ligand_directory,
-    )
+    label = f"{ligand_directory.name}/{key}"
+    logger.info("%s: setting up (ligand charge %s)", label, info["charge"])
     # Setup system directory
     system_directory = ligand_directory / key
     system_directory.mkdir(parents=True, exist_ok=True)
@@ -81,7 +118,8 @@ async def simulate_ligand_in_solvent(
         include_lines.append('#include "../ligand.itp"')
         mixture = sim_config[name].get("composition", {"W": 1.0})
         charge = info["charge"] if sim_config[name].get("neutralize", True) else 0
-        setup_solvent_box(
+        logger.info("%s: building solvent box with COBY", label)
+        composition = setup_solvent_box(
             ligand_gro=ligand_gro,
             ligand_top=ligand_top,
             system_gro=system_gro,
@@ -92,6 +130,7 @@ async def simulate_ligand_in_solvent(
             include_lines=include_lines,
             mixture=mixture,
         )
+        logger.info("%s: box built (%s)", label, _format_counts(composition))
         check_file_exists(
             system_top,
             system_gro,
@@ -120,7 +159,9 @@ async def simulate_ligand_in_solvent(
         sim_config=sim_config,
     )
     if not Path(minimization.out_coord).exists():
-        logger.debug("Running minimization for %s", info["name"])
+        logger.info(
+            "%s: running minimization (%s)", label, minimization.input_files["log"]
+        )
         minimization.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Run equilibration
     equilibration = Simulation(
@@ -133,7 +174,9 @@ async def simulate_ligand_in_solvent(
         sim_config=sim_config,
     )
     if not Path(equilibration.out_coord).exists():
-        logger.debug("Running equilibration for %s", info["name"])
+        logger.info(
+            "%s: running equilibration (%s)", label, equilibration.input_files["log"]
+        )
         equilibration.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Determine number of lambda steps and copy simulation config file
     mdp_file = sim_config[name].production
@@ -143,6 +186,7 @@ async def simulate_ligand_in_solvent(
     production_mdp = system_directory / "production.mdp"
     shutil.copy(mdp_file, production_mdp)
     # Setup production for each lambda step
+    window_states = {"submitted": 0, "already queued": 0, "finished": 0}
     for step in range(n_lambda):
         lambda_dir = system_directory / f"lambda-{step:03d}"
         lambda_dir.mkdir(parents=True, exist_ok=True)
@@ -157,8 +201,10 @@ async def simulate_ligand_in_solvent(
             sim_config=sim_config,
         )
         if Path(production.out_coord).exists():
+            window_states["finished"] += 1
             continue
         if not lambda_out_tpr.exists() or sim_config.queue.readd:
+            window_states["submitted"] += 1
             mdp_modifications = {"init-lambda-state": step}
             if sim_config[name].get(f"xout{step}", None) is not None:
                 xout_value = sim_config[name][f"xout{step}"]
@@ -166,11 +212,12 @@ async def simulate_ligand_in_solvent(
             elif sim_config[name].get("xout", None) is not None:
                 mdp_modifications["nstxout-compressed"] = sim_config[name].xout
             production.modify_mdp(mdp_modifications)
-            logger.debug(
-                "Running production for %s, lambda step %d", info["name"], step
-            )
+            _log_production_start(label, step, n_lambda, sim_config)
             # Submit to queue
             production.run(ignore_queue=False, extra_args=sim_config.get("gromacs", ""))
+        else:
+            window_states["already queued"] += 1
+    _log_production_summary(label, n_lambda, window_states, sim_config)
     return n_lambda
 
 
@@ -195,13 +242,8 @@ async def simulate_ligand_with_protein(
     if key in info:
         logger.info("Skipping %s simulation for %s, already exists", key, info["name"])
         return
-    logger.debug(
-        "Simulating ligand %s with charge %s in %s in directory: %s",
-        info["name"],
-        info["charge"],
-        key,
-        ligand_directory,
-    )
+    label = f"{ligand_directory.name}/{key}"
+    logger.info("%s: setting up (ligand charge %s)", label, info["charge"])
     # Read protein charge from file
     protein_info = read_json_file(Path(sim_config.directory) / "protein_info.json")
     total_charge = info["charge"] + protein_info["charge"]
@@ -247,57 +289,41 @@ async def simulate_ligand_with_protein(
             protein_ligand_pdb_file.writelines(ligand_pdb_lines)
             protein_ligand_pdb_file.write("TER\nEND\n")
         logger.debug("Wrote combined protein-ligand pdb file: %s", protein_ligand_pdb)
-    # Setup simulation box with insane
+    # Setup simulation box with COBY
     system_top = system_directory / "system.top"
     system_gro = system_directory / "system.gro"
     if not system_top.exists() or not system_gro.exists():
-        box_margin = sim_config.protein.box_margin
-        insane_cmd = (
-            f"insane -f {protein_ligand_pdb} -o {system_gro} -p {system_top} "
-            + f"-pbc cubic -d {box_margin} -sol W"
+        include_lines = [
+            f'#include "{sim_config.martini.topology}"',
+            "\n[ atomtypes ]\nDUM 0.0 0.000 V 0.0 0.0\n",
+        ]
+        include_lines += [
+            f'#include "{sim_config.martini[imp]}"'
+            for imp in sim_config.martini
+            if imp != "topology"
+        ]
+        include_lines.append('#include "../ligand.itp"')
+        if (ligand_directory / "protein.itp").exists():
+            include_lines.append('#include "../protein.itp"')
+        else:
+            include_lines.append('#include "../../protein.itp"')
+        charge = total_charge if sim_config.protein.get("neutralize", True) else 0
+        logger.info("%s: solvating protein-ligand complex with COBY", label)
+        composition = setup_protein_box(
+            protein_ligand_pdb=protein_ligand_pdb,
+            system_gro=system_gro,
+            system_top=system_top,
+            box_margin=sim_config.protein.box_margin,
+            charge=charge,
+            include_lines=include_lines,
+            protein_name=protein_info["name"],
+            salt_concentration=sim_config.protein.get("salt", None) or 0.0,
         )
-        if sim_config.protein.get("neutralize", True) and total_charge != 0:
-            insane_cmd += f" -charge {total_charge}"
-        if sim_config.protein.get("salt", None) is not None:
-            insane_cmd += f" -salt {sim_config.protein.salt}"
-        logger.debug("Running command: %s", insane_cmd)
-        run(insane_cmd, shell=True, check=True)
+        logger.info("%s: box built (%s)", label, _format_counts(composition))
         check_file_exists(
             system_top,
             system_gro,
-            message="Insane did not produce expected output files.",
-        )
-        # Fix topology file to include correct imports
-        martini_imports = f'#include "{sim_config.martini.topology}"\n\n'
-        martini_imports += "[ atomtypes ]\nDUM 0.0 0.000 V 0.0 0.0\n\n"
-        martini_imports += "\n".join(
-            [
-                f'#include "{sim_config.martini[imp]}"'
-                for imp in sim_config.martini
-                if imp != "topology"
-            ]
-        )
-        martini_imports += '\n#include "../ligand.itp"'
-        if (ligand_directory / "protein.itp").exists():
-            martini_imports += '\n#include "../protein.itp"'
-        else:
-            martini_imports += '\n#include "../../protein.itp"'
-        replace_in_file(
-            system_top,
-            {
-                "Insanely solvated protein.": "Ligand in protein-water system.",
-                '#include "martini.itp"': martini_imports,
-                "Protein          1": f"{protein_info['name']}          1\nligand          1",
-                "CL-": "CL",  # Fix insane ion naming
-                "NA+": "NA",  # Fix insane ion naming
-            },
-        )
-        replace_in_file(
-            system_gro,
-            {
-                " NA+": "  NA",  # Fix insane ion naming
-                " CL-": "  CL",  # Fix insane ion naming
-            },
+            message="COBY did not produce expected output files.",
         )
     # Create index file
     system_ndx = system_directory / "system.ndx"
@@ -342,11 +368,15 @@ async def simulate_ligand_with_protein(
         sim_config=sim_config,
     )
     if not Path(minimization.out_coord).exists():
-        logger.debug("Running minimization for %s", info["name"])
+        logger.info(
+            "%s: running minimization (%s)", label, minimization.input_files["log"]
+        )
         minimization.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
-    # Run equilibration
+    # Run equilibration, with a copy of the mdp file as it is modified for the system
+    equilibration_mdp = system_directory / "equilibration.mdp"
+    shutil.copy(sim_config.protein.equilibration, equilibration_mdp)
     equilibration = Simulation(
-        sim_config.protein.equilibration,
+        equilibration_mdp,
         minimization.out_coord,
         system_top,
         system_directory / "equilibration.tpr",
@@ -356,7 +386,9 @@ async def simulate_ligand_with_protein(
     )
     if not Path(equilibration.out_coord).exists():
         equilibration.modify_mdp("pull-group1-pbcatom", closest_bead_idx)
-        logger.debug("Running equilibration for %s", info["name"])
+        logger.info(
+            "%s: running equilibration (%s)", label, equilibration.input_files["log"]
+        )
         equilibration.run(ignore_queue=True, extra_args=sim_config.get("gromacs", ""))
     # Get production mdp file based on ligand properties
     mdp_file = sim_config.protein.production
@@ -379,6 +411,7 @@ async def simulate_ligand_with_protein(
     # Run production for each lambda step
     run_mode = sim_config.protein.get("run_mode", "serial")
     logger.debug("Running production for %s in %s mode", info["name"], run_mode)
+    window_states = {"submitted": 0, "already queued": 0, "finished": 0}
     starting_config = equilibration.out_coord
     for step in range(n_lambda - 1, -1, -1):
         lambda_dir = system_directory / f"lambda-{step:03d}"
@@ -393,8 +426,11 @@ async def simulate_ligand_with_protein(
             system_ndx,
             sim_config=sim_config,
         )
-        if not Path(production.out_coord).exists():
+        if Path(production.out_coord).exists():
+            window_states["finished"] += 1
+        else:
             if not lambda_out_tpr.exists() or sim_config.queue.readd:
+                window_states["submitted"] += 1
                 production.modify_mdp(
                     {
                         "init-lambda-state": step,
@@ -402,14 +438,20 @@ async def simulate_ligand_with_protein(
                         "pull-nstxout": 100 if step == 0 else 0,
                     }
                 )
-                logger.debug(
-                    "Running production for %s, lambda step %d", info["name"], step
-                )
+                _log_production_start(label, step, n_lambda, sim_config)
                 # Submit to queue
                 production.run(
                     ignore_queue=False, extra_args=sim_config.get("gromacs", "")
                 )
+            else:
+                window_states["already queued"] += 1
             if run_mode == "serial":
+                logger.info(
+                    "%s: waiting for lambda window %d/%d before starting the next one",
+                    label,
+                    step + 1,
+                    n_lambda,
+                )
                 # Wait for simulation to finish or complete required number of steps before
                 # continuing with the next lambda step
                 log_file = Path(production.out_coord).with_suffix(".log")
@@ -464,6 +506,7 @@ async def simulate_ligand_with_protein(
                     "Created starting structure for next lambda step: %s",
                     starting_config,
                 )
+    _log_production_summary(label, n_lambda, window_states, sim_config)
     if run_mode == "serial":
         # Wait for all lambda simulations to finish
         for step in range(n_lambda):
@@ -541,10 +584,23 @@ async def simulate_ligand(
                 ligand_directory / key / f"lambda-{step:03d}" / "production.gro"
                 for step in range(n_lambda)
             ]
+    last_finished, last_report = None, 0.0
     while True:
         finished = sum(1 for f in lambda_gro_files if f.exists())
         if finished == len(lambda_gro_files):
             break
+        # Report when a window finished, otherwise every 10 minutes
+        if finished != last_finished or monotonic() - last_report > 600:
+            logger.info(
+                "%s: %d/%d lambda windows finished, waiting for the rest",
+                ligand_directory.name,
+                finished,
+                len(lambda_gro_files),
+            )
+            last_finished, last_report = finished, monotonic()
         await asyncio.sleep(5)
     # Perform free energy calculations
+    logger.info(
+        "%s: all simulations finished, calculating free energies", ligand_directory.name
+    )
     calculate_free_energies(ligand_directory, list(n_lambdas.keys()))

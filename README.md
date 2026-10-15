@@ -26,7 +26,7 @@ pip install -e .
 You also need these on your path:
 
 - GROMACS, built with MPI (`gmx_mpi`). Thread counts are set with `-ntomp`, as `-nt` only exists in thread-MPI builds.
-- `martinize2`, `insane` and [COBY](https://github.com/MikkelDA/COBY) (builds the water box of the unbound leg), which are installed as dependencies
+- `martinize2` and [COBY](https://github.com/MikkelDA/COBY) (builds the solvated boxes of both legs), which are installed as dependencies
 
 The Martini 3 force field files are included as `martini3.ff/martini.itp`, `martini3.ff/martini_solvents.itp` and `martini3.ff/martini_ions.itp`. These paths must be resolvable by `grompp`, either through `GMXLIB` or by setting absolute paths in the config (see below). The force field has to contain the bead types used by your ligand.
 
