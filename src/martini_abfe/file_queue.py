@@ -16,6 +16,17 @@ from .utils import local_command, local_path
 logger = logging.getLogger(__name__)
 
 
+def _missing_note(queue_filename: Path) -> str:
+    """
+    Note for the log that the queue file does not exist, e.g. due to a wrong directory.
+    :param queue_filename: Path to the queue file.
+    :return: Note to append to a message, empty if the file exists.
+    """
+    if os.path.exists(queue_filename):
+        return ""
+    return f" (file does not exist, the full path is {queue_filename})"
+
+
 def _format_duration(seconds: float) -> str:
     """
     Format a duration for the log, e.g. '2h 05m' or '3m 12s'.
@@ -260,7 +271,11 @@ def run_single_simulations(
             # If the queue is empty, wait for a while before checking again
             if task is None:
                 if not waiting:
-                    logger.info("Waiting for tasks in %s", local_path(queue_filename))
+                    logger.info(
+                        "Waiting for tasks in %s%s",
+                        local_path(queue_filename),
+                        _missing_note(queue_filename),
+                    )
                     waiting = True
                 if auto_quit:
                     quit_counter += 1
@@ -356,8 +371,9 @@ def run_replica_exchange_simulations(
             if task is None:
                 if not waiting:
                     logger.info(
-                        "Waiting for a complete set of lambda windows in %s",
+                        "Waiting for a complete set of lambda windows in %s%s",
                         local_path(queue_filename),
+                        _missing_note(queue_filename),
                     )
                     waiting = True
                 if auto_quit:
