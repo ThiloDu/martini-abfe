@@ -1,14 +1,32 @@
 """Simulator file for running GROMACS simulations from the simulation queue."""
 
 import argparse
+import logging
 import os
 import socket
 import subprocess
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 from typing import Optional
+
+from .utils import local_command, local_path
+
+logger = logging.getLogger(__name__)
+
+
+def _format_duration(seconds: float) -> str:
+    """
+    Format a duration for the log, e.g. '2h 05m' or '3m 12s'.
+    :param seconds: Duration in seconds.
+    :return: Formatted duration.
+    """
+    minutes, seconds = divmod(round(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m {seconds:02d}s"
 
 
 def gromacs_env(command: str) -> dict[str, str]:
@@ -67,7 +85,7 @@ def add_simulation_task_to_file_queue(task_name: str | list[str], queue_filename
                     task = Path(task).resolve()
                     queue_list_file.write(str(task) + "\n")
                 except ValueError:
-                    print(f"ValueError: {task} is not a valid path")
+                    logger.warning("Skipping invalid queue entry %s", task)
 
 
 def get_simulation_task_from_file_queue(queue_filename: Path) -> tuple[str, str] | None:
@@ -134,7 +152,10 @@ def get_simulation_batch_from_file_queue(
             # Get number of tasks in the same batch
             mdp_path = f"{task_name}.out.mdp"
             if not os.path.exists(mdp_path):
-                print(f"MDP file not found for task {task_name}. Skipping batch.")
+                logger.warning(
+                    "MDP file not found for task %s, skipping batch",
+                    local_path(task_name),
+                )
                 return None
             num_lambdas = 0
             with open(mdp_path, "r", encoding="utf-8") as mdp_file:
@@ -227,59 +248,72 @@ def run_single_simulations(
     :param stop_file: Stop after the current task once this file exists.
     """
     quit_counter = 0
+    waiting = False
     while max_tasks is None or max_tasks > 0:
         task = None
         try:
             if stop_file and os.path.exists(stop_file):
-                print("Found stop file. Exiting...")
+                logger.info("Found stop file %s, exiting", local_path(stop_file))
                 break
             # Get the next task from the queue
             task = get_simulation_task_from_file_queue(queue_filename)
             # If the queue is empty, wait for a while before checking again
             if task is None:
+                if not waiting:
+                    logger.info("Waiting for tasks in %s", local_path(queue_filename))
+                    waiting = True
                 if auto_quit:
                     quit_counter += 1
                     if quit_counter > 60 * 5:
-                        print("Queue is empty. Exiting...")
+                        logger.info("Queue is empty, exiting")
                         break
                 sleep(2)
             # If a task was retrieved, run the simulation
             else:
                 dirname, basename = task
                 task_name = os.path.join(dirname, basename)
-                quit_counter = 0
+                quit_counter, waiting = 0, False
                 time = str(datetime.now()).split(".", maxsplit=1)[0]
-                # Write to log file and print message with timestamp
+                # Write the start to the run log of the task
                 with open(f"{task_name}.run.log", "a", encoding="utf-8") as log_file:
                     hostname = socket.gethostname()
                     log_file.write(f"Simulation started at {time} on host {hostname}\n")
-                print(f"{time} Running task: {task_name}")
+                logger.info("Running %s", local_path(task_name))
+                start = monotonic()
                 # Setup GROMACS command
                 command = (
                     f'gmx_mpi mdrun -deffnm "{basename}" -px "{basename}.px.xvg" '
                     + f'-pf "{basename}.pf.xvg" {extra} >> "{basename}.run.log" 2>&1'
                 )
                 # Run command
+                logger.debug("Running command in %s: %s", local_path(dirname), command)
                 subprocess.run(
                     command, shell=True, check=True, cwd=dirname, env=gromacs_env(command)
                 )
                 if not os.path.exists(f"{task_name}.gro"):
-                    raise RuntimeError("Task failed: Gro file not found.")
-                # Print completion message with timestamp
-                time = str(datetime.now()).split(".", maxsplit=1)[0]
-                print(f"{time} Task finished: {task_name}")
+                    raise RuntimeError(f"No output {local_path(task_name)}.gro written")
+                logger.info(
+                    "Finished %s in %s",
+                    local_path(task_name),
+                    _format_duration(monotonic() - start),
+                )
                 if max_tasks is not None:
                     max_tasks -= 1
         except KeyboardInterrupt:
-            print("Exiting...")
+            if task is not None:
+                logger.info("Interrupted, returning the current task to the queue")
+            else:
+                logger.info("Interrupted, exiting")
             # Reset the task by adding it back to the queue
             _reset_task(task, queue_filename)
             break
         except Exception as e:
-            print(e)
+            logger.error("Task failed: %s", local_command(str(e)))
+            if task is not None:
+                logger.error("See %s.run.log", local_path(os.path.join(*task)))
             if readd_failed and task is not None:
                 if Path(os.path.join(*task)).with_suffix(".tpr").exists():
-                    print("Re-adding failed task to the queue...")
+                    logger.info("Re-adding failed task to the queue")
                     _reset_task(task, queue_filename, delete_files=True)
 
 
@@ -309,30 +343,41 @@ def run_replica_exchange_simulations(
     :param stop_file: Stop after the current batch once this file exists.
     """
     quit_counter = 0
+    waiting = False
     while max_tasks is None or max_tasks > 0:
         task = None
         try:
             if stop_file and os.path.exists(stop_file):
-                print("Found stop file. Exiting...")
+                logger.info("Found stop file %s, exiting", local_path(stop_file))
                 break
             # Get the next task from the queue
             task = get_simulation_batch_from_file_queue(queue_filename)
             # If the queue is empty, wait for a while before checking again
             if task is None:
+                if not waiting:
+                    logger.info(
+                        "Waiting for a complete set of lambda windows in %s",
+                        local_path(queue_filename),
+                    )
+                    waiting = True
                 if auto_quit:
                     quit_counter += 1
                     if quit_counter > 60 * 5:
-                        print("Queue is empty. Exiting...")
+                        logger.info("Queue is empty, exiting")
                         break
                 sleep(2)
             # If a task was retrieved, run the simulation
             else:
                 dirname, target_dirs, basename = task
-                quit_counter = 0
-                # Print message with timestamp
-                time = str(datetime.now()).split(".", maxsplit=1)[0]
+                quit_counter, waiting = 0, False
                 n_replicas = len(target_dirs)
-                print(f"{time} Running task: {dirname} with {n_replicas} replicas")
+                logger.info(
+                    "Running %s with %d replicas on %d GPUs",
+                    local_path(dirname),
+                    n_replicas,
+                    n_gpus,
+                )
+                start = monotonic()
                 # Setup GROMACS command
                 lambda_dirs = " ".join(sorted(target_dirs))
                 gputasks = "".join(
@@ -346,28 +391,38 @@ def run_replica_exchange_simulations(
                     f'{extra} >> "{os.path.join(dirname, basename)}.run.log" 2>&1'
                 )
                 # Run command
+                logger.debug("Running command in %s: %s", local_path(dirname), command)
                 subprocess.run(
                     command, shell=True, check=True, cwd=dirname, env=gromacs_env(command)
                 )
                 output_path = f"{os.path.join(dirname, target_dirs[0], basename)}.gro"
                 if not os.path.exists(output_path):
-                    raise RuntimeError(f"Task failed: File {output_path} not found.")
-                # Print completion message with timestamp
-                time = str(datetime.now()).split(".", maxsplit=1)[0]
-                print(f"{time} Task finished: {dirname} with {n_replicas} replicas")
+                    raise RuntimeError(f"No output {local_path(output_path)} written")
+                logger.info(
+                    "Finished %s in %s",
+                    local_path(dirname),
+                    _format_duration(monotonic() - start),
+                )
                 if max_tasks is not None:
                     max_tasks -= 1
         except KeyboardInterrupt:
-            print("Exiting...")
+            if task is not None:
+                logger.info("Interrupted, returning the current batch to the queue")
+            else:
+                logger.info("Interrupted, exiting")
             # Reset the task by adding it back to the queue
             _reset_task(task, queue_filename)
             break
         except Exception as e:
-            print(e)
+            logger.error("Task failed: %s", local_command(str(e)))
+            if task is not None:
+                logger.error(
+                    "See %s.run.log", local_path(os.path.join(task[0], task[2]))
+                )
             if readd_failed and task is not None:
                 paths = [os.path.join(task[0], t, task[2]) for t in task[1]]
                 if all(Path(p).with_suffix(".tpr").exists() for p in paths):
-                    print("Re-adding failed task to the queue...")
+                    logger.info("Re-adding failed batch to the queue")
                     _reset_task(task, queue_filename, delete_files=True)
 
 
@@ -436,14 +491,30 @@ def run_simulations_from_queue():
         default="",
         help="Extra MPI flags to pass to mpirun for replica exchange simulations.",
     )
+    ap.add_argument(
+        "--verbose", "-v", action="store_true", help="Also log the mdrun commands."
+    )
     # Parse command line arguments
     args = ap.parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     queue_filename = Path(args.queue_file).expanduser().resolve()
     auto_quit = args.auto_quit
     max_tasks = args.max_tasks if args.max_tasks and args.max_tasks > 0 else None
     stop_file = Path(args.stop_file).expanduser().resolve() if args.stop_file else None
+    replex = args.replex is not None and args.replex > 0
+    logger.info(
+        "Worker on %s processing %s (%s, mdrun arguments: '%s')",
+        socket.gethostname(),
+        local_path(queue_filename),
+        f"replica exchange every {args.replex} steps" if replex else "single windows",
+        args.extra,
+    )
     # Run simulations
-    if args.replex is not None and args.replex > 0:
+    if replex:
         run_replica_exchange_simulations(
             queue_filename=queue_filename,
             n_gpus=args.n_gpus,
