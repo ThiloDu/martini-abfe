@@ -40,6 +40,12 @@ NTOMP=$(( SLURM_CPUS_PER_TASK / MAX_REPLICAS ))
 NTOMP=$(( NTOMP > 0 ? NTOMP : 1 ))
 
 echo "Host $(hostname), ${SLURM_CPUS_PER_TASK} cores, ${N_GPUS} GPUs, -ntomp ${NTOMP}"
+echo "martini-abfe-queue: $(command -v martini-abfe-queue || echo 'not found')"
+echo "gmx_mpi: $(command -v gmx_mpi || echo 'not found'), mpirun: $(command -v mpirun || echo 'not found')"
+echo "Queue file: $(realpath -m "${QUEUE_FILE}")"
+
+# Write Python output to the job log immediately instead of buffering it
+export PYTHONUNBUFFERED=1
 
 # Replicas are spawned by mpirun inside the single Slurm task, so allow more ranks than
 # tasks and leave the thread placement to mdrun (-pin on)
