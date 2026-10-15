@@ -8,7 +8,7 @@ from time import sleep
 
 from omegaconf import OmegaConf
 
-from .file_queue import add_simulation_task_to_file_queue
+from .file_queue import add_simulation_task_to_file_queue, gromacs_env
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ class Simulation:
             if "log" in self.input_files.keys() and ">>" not in command:
                 command += f" >> {self.input_files['log']} 2>&1"
             logger.debug("Running command: %s", command)
-            subprocess.run(command, shell=True, check=True)
+            subprocess.run(command, shell=True, check=True, env=gromacs_env(command))
         elif self.sim_config.queue.type == "file":
             # Add simulation to queue
             queue_filename = Path(self.sim_config.queue.path)

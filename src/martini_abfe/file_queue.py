@@ -11,6 +11,19 @@ from time import sleep
 from typing import Optional
 
 
+def gromacs_env(command: str) -> dict[str, str]:
+    """
+    Environment for a GROMACS command. GROMACS aborts if OMP_NUM_THREADS differs from
+    -ntomp, so the variable is dropped when the command sets the threads explicitly.
+    :param command: GROMACS command line.
+    :return: Environment variables for the subprocess.
+    """
+    env = dict(os.environ)
+    if "-ntomp" in command.split():
+        env.pop("OMP_NUM_THREADS", None)
+    return env
+
+
 @contextmanager
 def _queue_lock(lock_file: str):
     """
@@ -247,7 +260,9 @@ def run_single_simulations(
                     + f'-pf "{basename}.pf.xvg" {extra} >> "{basename}.run.log" 2>&1'
                 )
                 # Run command
-                subprocess.run(command, shell=True, check=True, cwd=dirname)
+                subprocess.run(
+                    command, shell=True, check=True, cwd=dirname, env=gromacs_env(command)
+                )
                 if not os.path.exists(f"{task_name}.gro"):
                     raise RuntimeError("Task failed: Gro file not found.")
                 # Print completion message with timestamp
@@ -331,7 +346,9 @@ def run_replica_exchange_simulations(
                     f'{extra} >> "{os.path.join(dirname, basename)}.run.log" 2>&1'
                 )
                 # Run command
-                subprocess.run(command, shell=True, check=True, cwd=dirname)
+                subprocess.run(
+                    command, shell=True, check=True, cwd=dirname, env=gromacs_env(command)
+                )
                 output_path = f"{os.path.join(dirname, target_dirs[0], basename)}.gro"
                 if not os.path.exists(output_path):
                     raise RuntimeError(f"Task failed: File {output_path} not found.")
