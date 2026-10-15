@@ -7,9 +7,9 @@ simulation:
     type: file                  # 'file' (worker queue) or 'none' (run locally)
     path: simulation-queue.dat  # resolved relative to the working directory
   martini:                      # force field files, found via GMXLIB or absolute paths
-    topology: martini3.ff/martini.itp
-    solvents: martini3.ff/martini_solvents.itp
-    ions: martini3.ff/martini_ions.itp
+    topology: /mnt/plutus/tduve/forcefields/1_martini_v3.0.0/martini_v3.0.0.itp
+    solvents: /mnt/plutus/tduve/forcefields/1_martini_v3.0.0/martini_v3.0.0_solvents_v1.itp
+    ions: /mnt/plutus/tduve/forcefields/1_martini_v3.0.0/martini_v3.0.0_ions_v1.itp
   protein:
     chain: null                 # e.g. "A" or "A,B"; all chains are merged into one molecule
     n_reruns: 3
