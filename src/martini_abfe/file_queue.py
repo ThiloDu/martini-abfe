@@ -40,6 +40,17 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes}m {seconds:02d}s"
 
 
+def pinned(mdrun_args: str) -> str:
+    """
+    Add thread pinning to mdrun arguments, unless they already set it.
+    :param mdrun_args: Extra mdrun arguments.
+    :return: Arguments with '-pin on' if no '-pin' option is given.
+    """
+    if "-pin" in mdrun_args.split():
+        return mdrun_args
+    return f"{mdrun_args} -pin on".strip()
+
+
 def gromacs_env(command: str) -> dict[str, str]:
     """
     Environment for a GROMACS command. GROMACS aborts if OMP_NUM_THREADS differs from
@@ -298,7 +309,8 @@ def run_single_simulations(
                 # Setup GROMACS command
                 command = (
                     f'gmx_mpi mdrun -deffnm "{basename}" -px "{basename}.px.xvg" '
-                    + f'-pf "{basename}.pf.xvg" {extra} >> "{basename}.run.log" 2>&1'
+                    f'-pf "{basename}.pf.xvg" {pinned(extra)} '
+                    f'>> "{basename}.run.log" 2>&1'
                 )
                 # Run command
                 logger.debug("Running command in %s: %s", local_path(dirname), command)
@@ -404,7 +416,8 @@ def run_replica_exchange_simulations(
                     f"mpirun {mpi_flags} -np {n_replicas} gmx_mpi mdrun -replex {replex} "
                     f'-multidir {lambda_dirs} -deffnm "{basename}" '
                     f'-gputasks {gputasks} -pf "{basename}.pf.xvg" -px "{basename}.px.xvg" '
-                    f'{extra} >> "{os.path.join(dirname, basename)}.run.log" 2>&1'
+                    f"{pinned(extra)} "
+                    f'>> "{os.path.join(dirname, basename)}.run.log" 2>&1'
                 )
                 # Run command
                 logger.debug("Running command in %s: %s", local_path(dirname), command)

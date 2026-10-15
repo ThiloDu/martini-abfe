@@ -8,7 +8,7 @@ from time import sleep
 
 from omegaconf import OmegaConf
 
-from .file_queue import add_simulation_task_to_file_queue, gromacs_env
+from .file_queue import add_simulation_task_to_file_queue, gromacs_env, pinned
 from .utils import local_command, local_path
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ class Simulation:
             # Pull output names as in the queue runner, read by the restraint correction
             command = (
                 f"gmx_mpi mdrun -deffnm {filename} -px {filename}.px.xvg "
-                f"-pf {filename}.pf.xvg {extra_args}"
+                f"-pf {filename}.pf.xvg {pinned(extra_args)}"
             )
             if "log" in self.input_files.keys() and ">>" not in command:
                 command += f" >> {self.input_files['log']} 2>&1"
