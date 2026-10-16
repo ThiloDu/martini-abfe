@@ -17,12 +17,20 @@
 #SBATCH --cpus-per-task=64
 #SBATCH -G A100:4
 #SBATCH --mem=480G
-#SBATCH --time=48:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=martini-abfe-%j.log
 # Send SIGINT 15 minutes before the time limit, so the worker returns the running leg to
 # the queue before the job ends
 #SBATCH --signal=B:INT@900
 ##SBATCH -A <project>
+
+export SLURM_CPU_BIND=none
+export GMX_ENABLE_DIRECT_GPU_COMM=true
+
+module purge
+module use /sw/modules/rev/26.02-beta/spack/rome_mofed_cuda80_rocky8/Core
+module load gcc/14.3.0 openmpi/5.0.10 gromacs/2025.3
+
 
 set -euo pipefail
 
@@ -30,9 +38,6 @@ QUEUE_FILE=${QUEUE_FILE:-simulation-queue.dat}
 # Largest number of lambda windows of a leg, i.e. MPI ranks of one replica exchange run
 MAX_REPLICAS=${MAX_REPLICAS:-23}
 
-# Environment providing gmx_mpi (GROMACS built with MPI and CUDA) and martini-abfe
-# module load <gromacs module>
-# source <conda>/bin/activate martini-abfe
 
 # One OpenMP thread per rank and core, so that the largest leg fits on the allocated cores
 N_GPUS=${SLURM_GPUS_ON_NODE:-1}
@@ -40,16 +45,10 @@ NTOMP=$(( SLURM_CPUS_PER_TASK / MAX_REPLICAS ))
 NTOMP=$(( NTOMP > 0 ? NTOMP : 1 ))
 
 echo "Host $(hostname), ${SLURM_CPUS_PER_TASK} cores, ${N_GPUS} GPUs, -ntomp ${NTOMP}"
-echo "martini-abfe-queue: $(command -v martini-abfe-queue || echo 'not found')"
-echo "gmx_mpi: $(command -v gmx_mpi || echo 'not found'), mpirun: $(command -v mpirun || echo 'not found')"
-echo "Queue file: $(realpath -m "${QUEUE_FILE}")"
-
-# Write Python output to the job log immediately instead of buffering it
-export PYTHONUNBUFFERED=1
 
 # Replicas are spawned by mpirun inside the single Slurm task, so allow more ranks than
 # tasks and leave the thread placement to mdrun (-pin on)
-exec martini-abfe-queue \
+martini-abfe-queue \
     -f "${QUEUE_FILE}" \
     --replex 1000 \
     --n-gpus "${N_GPUS}" \
