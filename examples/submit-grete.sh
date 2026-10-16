@@ -48,7 +48,7 @@ echo "Host $(hostname), ${SLURM_CPUS_PER_TASK} cores, ${N_GPUS} GPUs, -ntomp ${N
 
 # Replicas are spawned by mpirun inside the single Slurm task, so allow more ranks than
 # tasks and leave the thread placement to mdrun (-pin on)
-martini-abfe-queue \
+exec martini-abfe-queue \
     -f "${QUEUE_FILE}" \
     --replex 1000 \
     --n-gpus "${N_GPUS}" \
