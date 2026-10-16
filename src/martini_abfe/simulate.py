@@ -530,7 +530,7 @@ async def simulate_ligand_with_protein(
 
 
 async def simulate_ligand(
-    ligand_directory: Path, config: OmegaConf, n_retries: int = 2
+    ligand_directory: Path, config: OmegaConf, n_retries: int = 2, wait: bool = True
 ):
     """
     Simulate a ligand in the protein pocket and in all solvents of the configuration.
@@ -539,6 +539,8 @@ async def simulate_ligand(
     :param ligand_directory: Directory where the ligand files are located.
     :param config: Configuration object.
     :param n_retries: Number of retries for a simulation in case of failure.
+    :param wait: Wait for the lambda simulations and calculate the free energies. If
+        False, return once all legs are set up and their lambda windows are queued.
     """
     n_lambdas = {}
     last_tried_system = None
@@ -589,6 +591,11 @@ async def simulate_ligand(
                 str(e),
             )
             shutil.rmtree(ligand_directory / last_tried_system)
+    if not wait:
+        logger.info(
+            "%s: all lambda windows queued, not waiting for them", ligand_directory.name
+        )
+        return
     # Wait for all lambda simulations to finish
     lambda_gro_files = []
     for key, n_lambda in n_lambdas.items():

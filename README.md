@@ -85,6 +85,8 @@ martini-abfe-queue -f simulation-queue.dat --replex 1000 --n-gpus 2 --extra "-nt
 
 Without `--replex`, the windows run one by one, without replica exchange. To run everything locally without a queue, use `martini-abfe run --queue none ...`.
 
+To only set up the legs and queue their windows, e.g. to process them later in a cluster job, use `martini-abfe run --no-wait ...`. It returns once all windows are queued; compute the free energies with `martini-abfe analyze` when the workers are done.
+
 `run` logs what it is doing for each system and leg: box setup, minimization and equilibration (with their log files), the number of queued lambda windows and how many of them are finished. Use `martini-abfe -v run ...` for debug output.
 
 Runs can be resumed: finished steps are skipped when `run` is called again. To rebuild a leg, e.g. after changing the force field paths, delete its directory (`protein-r1/`).

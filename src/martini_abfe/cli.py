@@ -233,6 +233,12 @@ def run(
     gromacs: Optional[str] = typer.Option(
         None, help="Extra mdrun arguments for minimization and equilibration"
     ),
+    no_wait: bool = typer.Option(
+        False,
+        "--no-wait",
+        help="Only set up the legs and queue their lambda windows, without waiting for "
+        "them. Compute the free energies later with 'martini-abfe analyze'.",
+    ),
 ):
     """
     Simulate the ligand in the protein pocket and in water, then compute the free
@@ -244,18 +250,34 @@ def run(
         config = _system_config(system, queue, queue_file)
         if gromacs is not None:
             config.simulation.gromacs = gromacs
+        if no_wait and config.simulation.queue.type != "file":
+            raise typer.BadParameter("--no-wait requires the file queue")
+        if no_wait and config.simulation.protein.get("run_mode") == "serial":
+            raise typer.BadParameter(
+                "--no-wait is not possible with run_mode 'serial', where each lambda "
+                "window starts from the previous one"
+            )
         if config.simulation.queue.type == "file":
             queue_path = config.simulation.queue.path
             typer.echo(
                 f"Queueing {system.name} in {local_path(queue_path)}, process it "
                 f"with: martini-abfe-queue -f {local_path(queue_path)}"
             )
-        tasks.append(simulate_ligand(ligand_directory=system, config=config))
+        tasks.append(
+            simulate_ligand(ligand_directory=system, config=config, wait=not no_wait)
+        )
 
     async def gather():
         await asyncio.gather(*tasks)
 
     asyncio.run(gather())
+    if no_wait:
+        names = " ".join(local_path(system) for system in systems)
+        typer.echo(
+            "All lambda windows are queued. Once the workers finished them, compute "
+            f"the free energies with: martini-abfe analyze {names}"
+        )
+        return
     _report(systems)
 
 
