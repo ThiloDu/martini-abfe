@@ -415,7 +415,7 @@ def run_replica_exchange_simulations(
                 command = (
                     f"mpirun {mpi_flags} -np {n_replicas} gmx_mpi mdrun -replex {replex} "
                     f'-multidir {lambda_dirs} -deffnm "{basename}" '
-                    f'-gputasks {gputasks} -pf "{basename}.pf.xvg" -px "{basename}.px.xvg" '
+                    f'-nb gpu -gputasks {gputasks} -pf "{basename}.pf.xvg" -px "{basename}.px.xvg" '
                     f"{pinned(extra)} "
                     f'>> "{os.path.join(dirname, basename)}.run.log" 2>&1'
                 )
