@@ -13,6 +13,7 @@ import typer
 from omegaconf import OmegaConf
 
 from .config import load_config
+from .correction import underbinding_correction
 from .free_energies import binding_free_energy, calculate_free_energies
 from .setup import setup_protein_structure
 from .simulate import rerun_keys, simulate_ligand
@@ -192,12 +193,19 @@ def prepare(
     setup_protein_structure(config)
     protein_info = read_json_file(output / "protein_info.json")
     ligand_info = read_json_file(output / "info.json")
+    underbinding = underbinding_correction(output)
+    charged = ", ".join(
+        f"{r['resname']}{r['resid']}{r['chain']}" for r in underbinding["charged_residues"]
+    )
     typer.echo(
         f"Prepared {output}\n"
         f"  protein charge {protein_info['charge']:+d}, ligand charge "
         f"{ligand_info['charge']:+d} ({len(ligand_info['beads'])} beads)\n"
         f"  pocket reference bead {protein_info['dummy_offset']:.3f} nm from the "
         f"ligand COM, built from beads {protein_info['dummy_reference_beads']}\n"
+        f"  {underbinding['n_charged']} charged pocket residues ({charged or 'none'}), "
+        f"predicted underbinding {underbinding['offset']:.1f} ± "
+        f"{underbinding['uncertainty']:.1f} kcal/mol\n"
         f"Check protein-cg.pdb and ligand.gro, then run: martini-abfe run {output}"
     )
 
@@ -286,18 +294,32 @@ def _report(systems: list[Path]):
     Compute and print the binding free energies of finished systems.
     :param systems: System directories.
     """
-    typer.echo(f"{'system':<30} {'dG_protein':>12} {'dG_water':>12} {'dG_bind':>18}")
+    typer.echo(
+        f"{'system':<30} {'dG_protein':>12} {'dG_water':>12} {'dG_bind':>18} "
+        f"{'N_charged':>9} {'dG_bind_corr':>18}"
+    )
     for system in systems:
         result = binding_free_energy(system.resolve())
         if result is None:
             typer.echo(f"{system.name:<30} {'not finished':>12}")
             continue
-        typer.echo(
+        line = (
             f"{result['name']:<30} {result['protein']['dG']:12.2f} "
             f"{result['water']['dG']:12.2f} "
             f"{result['dG_bind']:10.2f} ± {result['ddG_bind']:.2f}"
         )
-    typer.echo("Free energies in kcal/mol, dG_bind = dG_water - dG_protein")
+        if "dG_bind_corrected" in result:
+            line += (
+                f" {result['underbinding']['n_charged']:9d} "
+                f"{result['dG_bind_corrected']:10.2f} ± "
+                f"{result['ddG_bind_corrected']:.2f}"
+            )
+        typer.echo(line)
+    typer.echo(
+        "Free energies in kcal/mol, dG_bind = dG_water - dG_protein. dG_bind_corr "
+        "subtracts the underbinding of Martini 3 predicted from the N_charged charged "
+        "pocket residues (arXiv:2610.11714), which shifts all ligands of a target equally."
+    )
 
 
 @app.command()

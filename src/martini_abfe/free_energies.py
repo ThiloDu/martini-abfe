@@ -17,6 +17,7 @@ from alchemlyb.preprocessing.subsampling import decorrelate_u_nk
 from MDAnalysis.lib.distances import minimize_vectors
 from pymbar.timeseries import statistical_inefficiency
 
+from .correction import underbinding_correction
 from .utils import (
     local_path,
     read_json_file,
@@ -289,7 +290,8 @@ def binding_free_energy(
     """
     Combine the decoupling free energies of all repeats into the binding free energy,
     dG_bind = dG_unbound - dG_bound, where the bound leg already contains the restraint
-    and standard state corrections.
+    and standard state corrections. The systematic underbinding of Martini 3, predicted
+    from the charged pocket residues, is subtracted in dG_bind_corrected.
     :param ligand_directory: Directory where the ligand files are located.
     :param bound: Name of the bound leg in the configuration.
     :param unbound: Name of the unbound leg in the configuration.
@@ -311,6 +313,13 @@ def binding_free_energy(
     result["ddG_bind"] = float(
         np.sqrt(result[unbound]["ddG"] ** 2 + result[bound]["ddG"] ** 2)
     )
+    correction = underbinding_correction(ligand_directory)
+    if correction is not None:
+        result["underbinding"] = correction
+        result["dG_bind_corrected"] = result["dG_bind"] - correction["offset"]
+        result["ddG_bind_corrected"] = float(
+            np.hypot(result["ddG_bind"], correction["uncertainty"])
+        )
     result["units"] = "kcal/mol"
     write_json_file(result, ligand_directory / "binding.json")
     return result

@@ -102,7 +102,20 @@ martini-abfe analyze systems/*/
 The results are stored in each system directory:
 
 - `info.json`: decoupling free energy of each leg and repeat, including the restraint and standard state corrections of the bound leg.
-- `binding.json`: the binding free energy, ΔG_bind = ΔG_water − ΔG_protein, in kcal/mol. Its error is the standard error over repeats.
+- `binding.json`: the binding free energy, ΔG_bind = ΔG_water − ΔG_protein, in kcal/mol. Its error is the standard error over repeats. It also contains the corrected binding free energy `dG_bind_corrected` and the details of the correction under `underbinding`.
+
+### Underbinding correction
+
+Martini 3 underbinds systematically, by 2.7 to 8.7 kcal/mol depending on the target ([arXiv:2610.11714](https://arxiv.org/abs/2610.11714)). The offset grows with the number of charged residues lining the pocket, N_charged:
+
+ΔG_CG − ΔG_ref = 0.507 N_charged + 3.265 kcal/mol
+
+The model was fitted to the mean offsets of 15 targets against FEP+ (R² = 0.78, leave-one-out Q² = 0.72). `dG_bind_corrected` subtracts this offset from ΔG_bind. Its error adds 0.83 kcal/mol in quadrature, the leave-one-target-out error of the predicted offset. Counting the pocket residues follows the paper:
+
+- The pocket contains all residues with a heavy atom within 0.6 nm of any heavy atom of the crystal ligand (`protein-clean.pdb`, `ligand-aa.pdb`).
+- Residue charges come from the protonation states of the atomistic structure. With hydrogens present, they are read from the hydrogens; otherwise, residue names (e.g. `ASH`, `HIP`) or standard states (charged Asp, Glu, Lys and Arg, neutral His) are used. Uncapped chain termini count as charged, so a residue at a terminus can change its net charge.
+
+`prepare` prints the charged pocket residues and the predicted offset. It is the same for all ligands bound to the same pocket, so it improves absolute binding free energies but does not change the ranking of ligands within a target. The model was fitted to pockets with 0 to 10 charged residues, so treat predictions outside this range with care. Protonate the complex before `prepare`, so that the count reflects the intended protonation states.
 
 ## Configuration
 
@@ -127,7 +140,7 @@ The default mdp files are in [src/martini_abfe/mdps](src/martini_abfe/mdps).
 | `ligand.itp`, `ligand.gro`            | CG ligand, placed in the pocket                             |
 | `protein-cg.pdb`, `protein.itp`       | CG protein with the reference bead                          |
 | `protein_info.json`                   | Protein charge, ligand center, reference bead definition    |
-| `info.json`, `binding.json`           | Ligand info and free energies                               |
+| `info.json`, `binding.json`           | Ligand info and free energies, with the underbinding correction |
 | `protein-r*/`, `water-r*/`            | Simulations of every leg and repeat, one `lambda-*` folder per window |
 
 ## Limitations
