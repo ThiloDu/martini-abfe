@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 from .config import load_config
 from .correction import underbinding_correction
 from .free_energies import binding_free_energy, calculate_free_energies
-from .setup import setup_protein_structure
+from .setup import GO_FILES, setup_protein_structure
 from .simulate import rerun_keys, simulate_ligand
 from .structure import (
     center_of_mass,
@@ -34,7 +34,13 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-PROTEIN_FILES = ["protein-clean.pdb", "protein-cg.pdb", "protein.itp", "protein_info.json"]
+PROTEIN_FILES = [
+    "protein-clean.pdb",
+    "protein-cg.pdb",
+    "protein.itp",
+    "protein_info.json",
+    *GO_FILES,
+]
 
 
 class Orientation(str, Enum):
@@ -136,6 +142,16 @@ def prepare(
         exists=True,
         help="Predefined CG protein structure, in the frame of the complex",
     ),
+    go_atomtypes: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        help="go_atomtypes.itp of a predefined GoMartini protein, with --go-nbparams",
+    ),
+    go_nbparams: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        help="go_nbparams.itp of a predefined GoMartini protein, with --go-atomtypes",
+    ),
     config_file: Optional[Path] = typer.Option(
         None, "--config", exists=True, help="YAML file overriding the default settings"
     ),
@@ -149,6 +165,13 @@ def prepare(
     """
     if (protein_itp is None) != (protein_gro is None):
         raise typer.BadParameter("Give both --protein-itp and --protein-gro, or neither")
+    if (go_atomtypes is None) != (go_nbparams is None):
+        raise typer.BadParameter("Give both --go-atomtypes and --go-nbparams, or neither")
+    if go_atomtypes is not None and protein_itp is None:
+        raise typer.BadParameter(
+            "--go-atomtypes and --go-nbparams need --protein-itp, set martinize.go in "
+            "the config to build a GoMartini model with martinize2"
+        )
     output = output.resolve()
     if (output / "config.yaml").exists():
         if not force:
@@ -202,7 +225,10 @@ def prepare(
     if protein_itp is not None:
         sim_config.protein.cg_itp = str(protein_itp)
         sim_config.protein.cg_gro = str(protein_gro)
-    for key in ("cg_itp", "cg_gro"):
+    if go_atomtypes is not None:
+        sim_config.protein.go_atomtypes = str(go_atomtypes)
+        sim_config.protein.go_nbparams = str(go_nbparams)
+    for key in ("cg_itp", "cg_gro", "go_atomtypes", "go_nbparams"):
         if sim_config.protein.get(key):
             sim_config.protein[key] = str(Path(sim_config.protein[key]).resolve())
     if sim_config.queue.get("path"):

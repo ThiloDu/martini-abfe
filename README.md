@@ -37,7 +37,7 @@ simulation:
 
 The force field has to contain the bead types used by your ligand, and the molecules `W`, `NA` and `CL`.
 
-The protein tertiary structure is kept with [OLIVES](https://github.com/Martini-Force-Field-Initiative/OLIVES), which is included as a submodule in `external/OLIVES`. It is found relative to the source tree, so install the package in editable mode (`pip install -e .`). With a regular install, or to use another script, set the environment variable `MARTINI_ABFE_OLIVES` or the config key `simulation.protein.olives` to the script. `prepare` stops with an error if no script is found. To use an elastic network instead, set `olives: null` and add `elastic: true` to the martinize options.
+The protein tertiary structure is kept with [OLIVES](https://github.com/Martini-Force-Field-Initiative/OLIVES), which is included as a submodule in `external/OLIVES`. It is found relative to the source tree, so install the package in editable mode (`pip install -e .`). With a regular install, or to use another script, set the environment variable `MARTINI_ABFE_OLIVES` or the config key `simulation.protein.olives` to the script. `prepare` stops with an error if no script is found. To use an elastic network instead, set `olives: null` and add `elastic: true` to the martinize options. For a GoMartini model, add `go: true` (or the path of a contact map) to the martinize options. OLIVES is then skipped, unless `olives` is set to a script explicitly. martinize2 writes `go_atomtypes.itp` and `go_nbparams.itp` to the system directory. They are included in the topology of the protein leg, together with `#define GO_VIRT`.
 
 ## Workflow
 
@@ -59,8 +59,8 @@ This creates the system directory and performs these steps:
    - `auto` (default without a mapping): fits the orientation of the CG ligand to the shape of the atomistic ligand.
    - `none`: only moves the CG centroid to the atomistic center of mass.
 3. Coarse-grains the protein with martinize2 and OLIVES. All atoms other than `ATOM` records (waters, ions, cofactors) are removed. Only the first model and alternate location are kept. Multiple chains are merged into a single molecule; `--chain A,B` keeps only some of them.
-   To use your own CG protein instead, pass `--protein-itp protein.itp --protein-gro protein.gro` (or set `protein.cg_itp` and `protein.cg_gro` in the config). Then martinize2 and OLIVES are skipped, so the topology has to include any elastic network or Go model already. It must define a single molecule with the atoms in the order of the gro file. The structure has to be in the frame of the complex, since the reference bead is placed at the ligand position from the complex. `prepare` warns if the CG and atomistic protein centroids are more than 0.5 nm apart. The atomistic protein is still cleaned, because the underbinding correction uses it.
-4. Adds the pocket reference bead `DUM` at the ligand center of mass. It is a virtual site of the 8 backbone beads around the pocket that are spread farthest apart. If fewer than 8 beads lie within 1.1 nm, the cutoff is increased automatically.
+   To use your own CG protein instead, pass `--protein-itp protein.itp --protein-gro protein.gro` (or set `protein.cg_itp` and `protein.cg_gro` in the config). Then martinize2 and OLIVES are skipped, so the topology has to include any elastic network or Go model already. It must define a single molecule with the atoms in the order of the gro file. The structure has to be in the frame of the complex, since the reference bead is placed at the ligand position from the complex. `prepare` warns if the CG and atomistic protein centroids are more than 0.5 nm apart. The atomistic protein is still cleaned, because the underbinding correction uses it. For a GoMartini protein, also pass `--go-atomtypes go_atomtypes.itp --go-nbparams go_nbparams.itp` (or `protein.go_atomtypes` and `protein.go_nbparams`). `prepare` checks that these files match the topology.
+4. Adds the pocket reference bead `DUM` at the ligand center of mass. It is a virtual site of the 8 backbone beads around the pocket that are spread farthest apart. Virtual sites, such as the GoMartini `CA` sites, are not used. If fewer than 8 beads lie within 1.1 nm, the cutoff is increased automatically.
 5. Writes the full configuration to `config.yaml` in the system directory.
 
 Check `protein-cg.pdb` and `ligand.gro` before running, e.g. in VMD. The summary printed by `prepare` gives the distance between the reference bead and the ligand center. It should be close to zero.
@@ -127,6 +127,7 @@ The model was fitted to the mean offsets of 15 targets against FEP+ (R² = 0.78,
 - `protein.box_margin`, `water.box_margin`, `*.salt`, `*.neutralize`: box size, NaCl concentration and counter-ions
 - `protein.martinize`: any martinize2 option, e.g. `mutate: "HIS320:HIS"`
 - `protein.cg_itp`, `protein.cg_gro`: predefined CG protein, replaces martinize2 and OLIVES
+- `protein.go_atomtypes`, `protein.go_nbparams`: GoMartini files of a predefined CG protein
 - `protein.n_reruns`, `water.n_reruns`: number of repeats
 - `protein.dummy_bead`: construction of the reference bead
 - `*.production`, `*.production_charged`: mdp files, for other lambda schedules
@@ -141,6 +142,7 @@ The default mdp files are in [src/martini_abfe/mdps](src/martini_abfe/mdps).
 | `complex.pdb`, `protein.pdb`, `ligand-aa.pdb` | Input complex and its split parts                   |
 | `ligand.itp`, `ligand.gro`            | CG ligand, placed in the pocket                             |
 | `protein-cg.pdb`, `protein.itp`       | CG protein with the reference bead                          |
+| `go_atomtypes.itp`, `go_nbparams.itp` | GoMartini virtual site types and contacts, if used          |
 | `protein_info.json`                   | Protein charge, ligand center, reference bead definition    |
 | `info.json`, `binding.json`           | Ligand info and free energies, with the underbinding correction |
 | `protein-r*/`, `water-r*/`            | Simulations of every leg and repeat, one `lambda-*` folder per window |

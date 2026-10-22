@@ -15,8 +15,11 @@ simulation:
     n_reruns: 3
     # cg_itp: my-protein.itp    # predefined CG protein (with cg_gro), skips martinize2/OLIVES
     # cg_gro: my-protein.gro    # must be in the frame of the complex
+    # go_atomtypes: go_atomtypes.itp  # GoMartini files of the predefined protein
+    # go_nbparams: go_nbparams.itp
     martinize:
       # mutate: "HIS320:HIS"    # any martinize2 option, true for flags
+      # go: true                # GoMartini instead of OLIVES
       maxwarn: 4
     dummy_bead:
       n_virtual_sites: 8        # backbone beads defining the pocket reference

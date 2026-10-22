@@ -14,6 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from .coby import setup_protein_box, setup_solvent_box
 from .free_energies import calculate_free_energies
+from .setup import GO_FILES
 from .simulation import Simulation
 from .utils import (
     check_file_exists,
@@ -300,20 +301,25 @@ async def simulate_ligand_with_protein(
     system_top = system_directory / "system.top"
     system_gro = system_directory / "system.gro"
     if not system_top.exists() or not system_gro.exists():
+        protein_prefix = "../" if (ligand_directory / "protein.itp").exists() else "../../"
+        protein_directory = (system_directory / protein_prefix).resolve()
+        go_model = all((protein_directory / f).exists() for f in GO_FILES)
         include_lines = [
             f'#include "{sim_config.martini.topology}"',
             "\n[ atomtypes ]\nDUM 0.0 0.000 V 0.0 0.0\n",
         ]
+        if go_model:
+            # Atom types and contacts of the GoMartini virtual sites, both files start
+            # with their section header and have to precede all molecule types
+            include_lines = ["#define GO_VIRT"] + include_lines
+            include_lines += [f'#include "{protein_prefix}{f}"' for f in GO_FILES]
         include_lines += [
             f'#include "{sim_config.martini[imp]}"'
             for imp in sim_config.martini
             if imp != "topology"
         ]
         include_lines.append('#include "../ligand.itp"')
-        if (ligand_directory / "protein.itp").exists():
-            include_lines.append('#include "../protein.itp"')
-        else:
-            include_lines.append('#include "../../protein.itp"')
+        include_lines.append(f'#include "{protein_prefix}protein.itp"')
         charge = total_charge if sim_config.protein.get("neutralize", True) else 0
         logger.info("%s: solvating protein-ligand complex with COBY", label)
         composition = setup_protein_box(

@@ -29,6 +29,9 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+# GoMartini atom types of the virtual CA sites and their contacts, in the system directory
+GO_FILES = ("go_atomtypes.itp", "go_nbparams.itp")
+
 
 def select_reference_beads(
     bead_coords: np.ndarray,
@@ -141,6 +144,7 @@ def add_dummy_atom_to_pocket(ligand_com: np.ndarray, sim_config: OmegaConf) -> d
         section = None
         last_atom_line = None
         bb_bead_indices = []
+        virtual_sites = set()
         for idx, line in enumerate(itp_lines):
             content = line.split(";")[0].strip()
             if not content or content.startswith("#"):
@@ -153,6 +157,11 @@ def add_dummy_atom_to_pocket(ligand_com: np.ndarray, sim_config: OmegaConf) -> d
                 # The new Martini protein model uses CA, the old one uses BB
                 if content.split()[4] in ("BB", "CA"):
                     bb_bead_indices.append(int(content.split()[0]))
+            elif section and section.startswith("virtual_sites"):
+                virtual_sites.add(int(content.split()[0]))
+        # GoMartini places virtual CA sites on the BB beads, which cannot construct the
+        # dummy virtual site
+        bb_bead_indices = [i for i in bb_bead_indices if i not in virtual_sites]
         n_itp_atoms = int(itp_lines[last_atom_line].split()[0])
         if n_itp_atoms != atom_id - 1:
             raise ValueError(
@@ -259,10 +268,69 @@ def _martinize_includes(top_file: Path) -> list[str]:
     return [inc for inc in includes if not Path(inc).name.startswith("martini")]
 
 
+def _section_entries(itp_file: Path, section: str) -> list[list[str]]:
+    """
+    Read the entries of all sections with the given name from a topology file.
+    :param itp_file: Topology file.
+    :param section: Section name, e.g. 'atomtypes'.
+    :return: Fields of every entry, without comments.
+    """
+    entries = []
+    current = None
+    for line in itp_file.read_text(encoding="utf-8").splitlines():
+        content = line.split(";")[0].strip()
+        if not content or content.startswith("#"):
+            continue
+        match = re.match(r"\[\s*(\w+)\s*\]", content)
+        if match:
+            current = match.group(1)
+        elif current == section:
+            entries.append(content.split())
+    return entries
+
+
+def _check_go_model(directory: Path):
+    """
+    Check that the GoMartini files in the system directory match the protein topology:
+    every Go atom type is used by the protein, every Go contact refers to Go atom types,
+    and the protein uses no Go-like atom types that are not defined.
+    :param directory: System directory with protein.itp and, for a Go model,
+        go_atomtypes.itp and go_nbparams.itp.
+    """
+    protein_itp = directory / "protein.itp"
+    name = get_molecule_name_from_itp(protein_itp)
+    protein_types = {atom[1] for atom in _section_entries(protein_itp, "atoms")}
+    go_like_types = {t for t in protein_types if re.fullmatch(rf"{re.escape(name)}_\d+", t)}
+    go_files = [directory / filename for filename in GO_FILES]
+    if not all(f.exists() for f in go_files):
+        if go_like_types:
+            raise ValueError(
+                f"protein.itp uses GoMartini atom types ({len(go_like_types)} of type "
+                f"{name}_N), but go_atomtypes.itp and go_nbparams.itp are missing."
+            )
+        return
+    go_types = {entry[0] for entry in _section_entries(go_files[0], "atomtypes")}
+    if not go_types or not go_types <= protein_types:
+        raise ValueError(
+            f"The atom types of {GO_FILES[0]} are not used by the protein {name}, the "
+            "Go files belong to another topology."
+        )
+    if go_like_types - go_types:
+        raise ValueError(
+            f"{len(go_like_types - go_types)} GoMartini atom types of the protein are "
+            f"not defined in {GO_FILES[0]}."
+        )
+    contacts = _section_entries(go_files[1], "nonbond_params")
+    if any(c[0] not in go_types or c[1] not in go_types for c in contacts):
+        raise ValueError(f"{GO_FILES[1]} contains atom types not in {GO_FILES[0]}.")
+    logger.info("GoMartini model with %d contacts", len(contacts))
+
+
 def _martinize_protein(sim_config: OmegaConf, directory: Path, chains: list[str]):
     """
     Coarse-grain the cleaned protein with martinize2 and stabilize its tertiary structure
-    with OLIVES, writing protein-cg.pdb and protein.itp.
+    with OLIVES, writing protein-cg.pdb and protein.itp. With the martinize2 option go,
+    the GoMartini files are written to the system directory instead of running OLIVES.
     :param sim_config: Simulation configuration from the config file.
     :param directory: System directory containing protein-clean.pdb.
     :param chains: Chains of the cleaned protein.
@@ -276,6 +344,10 @@ def _martinize_protein(sim_config: OmegaConf, directory: Path, chains: list[str]
     if len(chains) > 1 and "merge" not in martinize_args:
         # The dummy bead is a virtual site, so all chains have to be one molecule
         martinize_args["merge"] = "all"
+    go = martinize_args.get("go")
+    if isinstance(go, str):
+        # A contact map file, martinize2 runs in the system directory
+        martinize_args["go"] = str(Path(go).resolve())
     extra_args = ""
     for key, value in martinize_args.items():
         if isinstance(value, bool) and value:
@@ -311,8 +383,13 @@ def _martinize_protein(sim_config: OmegaConf, directory: Path, chains: list[str]
     if itp_file.resolve() != output_itp:
         shutil.move(itp_file, output_itp)
         logger.debug("Moved itp file to %s", local_path(output_itp))
-    # Run OLIVES if specified in config
+    # Run OLIVES if specified in config, by default not with a Go model
     olives = sim_config.protein.get("olives", None)
+    if go and olives == "auto":
+        logger.info("Using GoMartini, OLIVES is not applied")
+        olives = None
+    elif go and olives:
+        logger.warning("Applying OLIVES on top of the GoMartini model")
     if olives == "auto":
         olives = default_olives_script()
         if olives is None:
@@ -336,7 +413,7 @@ def _martinize_protein(sim_config: OmegaConf, directory: Path, chains: list[str]
                 stdout=log_file,
                 stderr=log_file,
             )
-    elif "elastic" not in martinize_args and "go" not in martinize_args:
+    elif "elastic" not in martinize_args and not go:
         logger.warning(
             "Neither OLIVES nor an elastic network is configured, the tertiary "
             "structure of the protein is not stabilized."
@@ -349,8 +426,9 @@ def _martinize_protein(sim_config: OmegaConf, directory: Path, chains: list[str]
 def _copy_predefined_protein(sim_config: OmegaConf, directory: Path):
     """
     Use a predefined CG protein instead of martinize2: copy its topology to protein.itp
-    and convert its structure to protein-cg.pdb. The structure has to be in the frame of
-    the atomistic complex, since the pocket reference bead is placed at the ligand.
+    and convert its structure to protein-cg.pdb. The files of a GoMartini model are
+    copied as well. The structure has to be in the frame of the atomistic complex, since
+    the pocket reference bead is placed at the ligand.
     :param sim_config: Simulation configuration from the config file.
     :param directory: System directory containing protein-clean.pdb.
     """
@@ -366,6 +444,13 @@ def _copy_predefined_protein(sim_config: OmegaConf, directory: Path):
             "molecule."
         )
     shutil.copy(cg_itp, directory / "protein.itp")
+    go_files = [sim_config.protein.get(k) for k in ("go_atomtypes", "go_nbparams")]
+    if all(go_files):
+        check_file_exists(*go_files)
+        for source, target in zip(go_files, GO_FILES):
+            shutil.copy(source, directory / target)
+    elif any(go_files):
+        raise ValueError("Give both protein.go_atomtypes and protein.go_nbparams")
     cg_coords = read_gro_coordinates(cg_gro)
     gro_to_pdb(cg_gro, directory / "protein-cg.pdb")
     # A structure from another frame would place the reference bead outside the pocket
@@ -411,8 +496,14 @@ def setup_protein_structure(config: OmegaConf):
     elif any(predefined):
         raise ValueError("Give both protein.cg_itp and protein.cg_gro, or neither")
     else:
+        if sim_config.protein.get("go_atomtypes") or sim_config.protein.get("go_nbparams"):
+            raise ValueError(
+                "protein.go_atomtypes and protein.go_nbparams need a predefined protein, "
+                "set protein.martinize.go to build a GoMartini model with martinize2"
+            )
         logger.info("Setting up protein structure with martinize2")
         _martinize_protein(sim_config, directory, chains)
+    _check_go_model(directory)
     # Get ligand COM from config or reference pdb file
     if isinstance(sim_config.protein.ligand, str):
         ligand_com = get_residue_com_from_pdb(input_file, sim_config.protein.ligand)

@@ -58,6 +58,9 @@ def default_config() -> DictConfig:
                     # Predefined CG protein (itp and gro), replaces martinize2 and OLIVES
                     "cg_itp": None,
                     "cg_gro": None,
+                    # GoMartini files of a predefined CG protein
+                    "go_atomtypes": None,
+                    "go_nbparams": None,
                     "martinize": {
                         "name": "protein",
                         "dssp": True,
