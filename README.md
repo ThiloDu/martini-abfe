@@ -59,6 +59,7 @@ This creates the system directory and performs these steps:
    - `auto` (default without a mapping): fits the orientation of the CG ligand to the shape of the atomistic ligand.
    - `none`: only moves the CG centroid to the atomistic center of mass.
 3. Coarse-grains the protein with martinize2 and OLIVES. All atoms other than `ATOM` records (waters, ions, cofactors) are removed. Only the first model and alternate location are kept. Multiple chains are merged into a single molecule; `--chain A,B` keeps only some of them.
+   To use your own CG protein instead, pass `--protein-itp protein.itp --protein-gro protein.gro` (or set `protein.cg_itp` and `protein.cg_gro` in the config). Then martinize2 and OLIVES are skipped, so the topology has to include any elastic network or Go model already. It must define a single molecule with the atoms in the order of the gro file. The structure has to be in the frame of the complex, since the reference bead is placed at the ligand position from the complex. `prepare` warns if the CG and atomistic protein centroids are more than 0.5 nm apart. The atomistic protein is still cleaned, because the underbinding correction uses it.
 4. Adds the pocket reference bead `DUM` at the ligand center of mass. It is a virtual site of the 8 backbone beads around the pocket that are spread farthest apart. If fewer than 8 beads lie within 1.1 nm, the cutoff is increased automatically.
 5. Writes the full configuration to `config.yaml` in the system directory.
 
@@ -125,6 +126,7 @@ The model was fitted to the mean offsets of 15 targets against FEP+ (R² = 0.78,
 - `martini`: force field paths
 - `protein.box_margin`, `water.box_margin`, `*.salt`, `*.neutralize`: box size, NaCl concentration and counter-ions
 - `protein.martinize`: any martinize2 option, e.g. `mutate: "HIS320:HIS"`
+- `protein.cg_itp`, `protein.cg_gro`: predefined CG protein, replaces martinize2 and OLIVES
 - `protein.n_reruns`, `water.n_reruns`: number of repeats
 - `protein.dummy_bead`: construction of the reference bead
 - `*.production`, `*.production_charged`: mdp files, for other lambda schedules

@@ -14,6 +14,7 @@ from scipy.optimize import minimize
 from scipy.spatial.distance import cdist
 
 from .config import default_olives_script
+from .structure import gro_to_pdb, read_gro_coordinates, read_pdb_atoms
 from .utils import (
     FileUpdater,
     check_file_exists,
@@ -258,33 +259,18 @@ def _martinize_includes(top_file: Path) -> list[str]:
     return [inc for inc in includes if not Path(inc).name.startswith("martini")]
 
 
-def setup_protein_structure(config: OmegaConf):
+def _martinize_protein(sim_config: OmegaConf, directory: Path, chains: list[str]):
     """
-    Setup the CG protein structure from the atomistic structure using martinize2 and
-    place a dummy bead at the center of the binding pocket.
-    :param config: Configuration object.
+    Coarse-grain the cleaned protein with martinize2 and stabilize its tertiary structure
+    with OLIVES, writing protein-cg.pdb and protein.itp.
+    :param sim_config: Simulation configuration from the config file.
+    :param directory: System directory containing protein-clean.pdb.
+    :param chains: Chains of the cleaned protein.
     """
-    logger.info("Setting up protein structure with martinize2")
-    sim_config = config.simulation
-    # Setup input and output files
-    input_file = sim_config.protein.file
-    directory = Path(sim_config.directory).resolve()
-    directory.mkdir(parents=True, exist_ok=True)
     output_clean = directory / "protein-clean.pdb"
     output_itp = directory / "protein.itp"
     output_top = directory / "protein.top"
     output_pdb = directory / "protein-cg.pdb"
-    check_file_exists(input_file)
-    if (directory / "protein_info.json").exists():
-        logger.info("Protein files already exist, skipping martinize step")
-        return
-    # Cleanup pdb structure
-    chains = clean_pdb_structure(
-        input_file, output_clean, chain=sim_config.protein.get("chain", None)
-    )
-    if len(chains) == 0:
-        raise ValueError(f"No protein atoms found in {input_file}")
-    logger.info("Protein chains: %s", ", ".join(c.strip() or "-" for c in chains))
     # Construct martinize2 command with extra arguments from config
     martinize_args = dict(sim_config.protein.get("martinize", {}))
     if len(chains) > 1 and "merge" not in martinize_args:
@@ -358,6 +344,75 @@ def setup_protein_structure(config: OmegaConf):
     # Delete useless top file
     output_top.unlink()
     logger.debug("Deleted temporary top file %s", local_path(output_top))
+
+
+def _copy_predefined_protein(sim_config: OmegaConf, directory: Path):
+    """
+    Use a predefined CG protein instead of martinize2: copy its topology to protein.itp
+    and convert its structure to protein-cg.pdb. The structure has to be in the frame of
+    the atomistic complex, since the pocket reference bead is placed at the ligand.
+    :param sim_config: Simulation configuration from the config file.
+    :param directory: System directory containing protein-clean.pdb.
+    """
+    cg_itp = Path(sim_config.protein.cg_itp)
+    cg_gro = Path(sim_config.protein.cg_gro)
+    check_file_exists(cg_itp, cg_gro)
+    logger.info("Using predefined CG protein %s, %s", cg_itp, cg_gro)
+    itp_text = cg_itp.read_text(encoding="utf-8")
+    n_molecules = len(re.findall(r"^\s*\[\s*moleculetype\s*\]", itp_text, re.M))
+    if n_molecules != 1:
+        raise ValueError(
+            f"{cg_itp} defines {n_molecules} molecules, merge all chains into a single "
+            "molecule."
+        )
+    shutil.copy(cg_itp, directory / "protein.itp")
+    cg_coords = read_gro_coordinates(cg_gro)
+    gro_to_pdb(cg_gro, directory / "protein-cg.pdb")
+    # A structure from another frame would place the reference bead outside the pocket
+    aa_atoms = read_pdb_atoms(directory / "protein-clean.pdb")
+    aa_coords = np.array([a["xyz"] for a in aa_atoms])
+    shift = np.linalg.norm(cg_coords.mean(axis=0) - aa_coords.mean(axis=0))
+    if shift > 0.5:
+        logger.warning(
+            "Centroid of the CG protein is %.2f nm from the atomistic protein, the CG "
+            "structure may not be in the frame of the complex.",
+            shift,
+        )
+
+
+def setup_protein_structure(config: OmegaConf):
+    """
+    Setup the CG protein structure from the atomistic structure using martinize2 and
+    OLIVES, or from a predefined CG protein, and place a dummy bead at the center of the
+    binding pocket.
+    :param config: Configuration object.
+    """
+    sim_config = config.simulation
+    # Setup input and output files
+    input_file = sim_config.protein.file
+    directory = Path(sim_config.directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    output_clean = directory / "protein-clean.pdb"
+    output_itp = directory / "protein.itp"
+    check_file_exists(input_file)
+    if (directory / "protein_info.json").exists():
+        logger.info("Protein files already exist, skipping martinize step")
+        return
+    # Cleanup pdb structure, also used to find the charged pocket residues
+    chains = clean_pdb_structure(
+        input_file, output_clean, chain=sim_config.protein.get("chain", None)
+    )
+    if len(chains) == 0:
+        raise ValueError(f"No protein atoms found in {input_file}")
+    logger.info("Protein chains: %s", ", ".join(c.strip() or "-" for c in chains))
+    predefined = [sim_config.protein.get(k) for k in ("cg_itp", "cg_gro")]
+    if all(predefined):
+        _copy_predefined_protein(sim_config, directory)
+    elif any(predefined):
+        raise ValueError("Give both protein.cg_itp and protein.cg_gro, or neither")
+    else:
+        logger.info("Setting up protein structure with martinize2")
+        _martinize_protein(sim_config, directory, chains)
     # Get ligand COM from config or reference pdb file
     if isinstance(sim_config.protein.ligand, str):
         ligand_com = get_residue_com_from_pdb(input_file, sim_config.protein.ligand)

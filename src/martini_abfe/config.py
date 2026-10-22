@@ -55,6 +55,9 @@ def default_config() -> DictConfig:
                         "regularization": 0.005,
                     },
                     "run_mode": "parallel",
+                    # Predefined CG protein (itp and gro), replaces martinize2 and OLIVES
+                    "cg_itp": None,
+                    "cg_gro": None,
                     "martinize": {
                         "name": "protein",
                         "dssp": True,

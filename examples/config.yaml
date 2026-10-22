@@ -13,6 +13,8 @@ simulation:
   protein:
     chain: null                 # e.g. "A" or "A,B"; all chains are merged into one molecule
     n_reruns: 3
+    # cg_itp: my-protein.itp    # predefined CG protein (with cg_gro), skips martinize2/OLIVES
+    # cg_gro: my-protein.gro    # must be in the frame of the complex
     martinize:
       # mutate: "HIS320:HIS"    # any martinize2 option, true for flags
       maxwarn: 4

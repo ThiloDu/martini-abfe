@@ -290,6 +290,43 @@ def write_ligand_gro(
         file.write(f"{extent:10.5f}{extent:10.5f}{extent:10.5f}\n")
 
 
+def gro_to_pdb(gro_file: Path, pdb_file: Path, chain: str = "A") -> int:
+    """
+    Convert a gro file into a pdb file with a single chain, keeping atom and residue
+    names and residue numbers.
+    :param gro_file: Input gro file.
+    :param pdb_file: Output pdb file.
+    :param chain: Chain identifier of all atoms.
+    :return: Number of atoms.
+    """
+    with open(gro_file, "r", encoding="utf-8") as file:
+        lines = file.readlines()
+    n_atoms = int(lines[1].strip())
+    box = [float(v) * 10 for v in lines[2 + n_atoms].split()[:3]]
+    pdb_lines = []
+    if any(box):
+        pdb_lines.append(
+            f"CRYST1{box[0]:9.3f}{box[1]:9.3f}{box[2]:9.3f}"
+            "  90.00  90.00  90.00 P 1           1\n"
+        )
+    for i, line in enumerate(lines[2 : 2 + n_atoms], start=1):
+        resid = int(line[0:5])
+        resname = line[5:10].strip()
+        name = line[10:15].strip()
+        # Atom names shorter than four characters start in the second column
+        name = name[:4] if len(name) >= 4 else f" {name}"
+        resname = f"{resname:>3} " if len(resname) <= 3 else resname[:4]
+        x, y, z = (float(line[s : s + 8]) * 10 for s in (20, 28, 36))
+        pdb_lines.append(
+            f"ATOM  {i % 100000:>5} {name:<4} {resname}{chain}{resid % 10000:>4}    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+        )
+    pdb_lines.append(f"TER   {(n_atoms + 1) % 100000:>5}\nEND\n")
+    with open(pdb_file, "w", encoding="utf-8") as file:
+        file.writelines(pdb_lines)
+    return n_atoms
+
+
 def read_mapping(ndx_file: Path) -> list[list[int]]:
     """
     Read a bead mapping in GROMACS index format, one group per bead in topology order

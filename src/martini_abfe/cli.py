@@ -125,6 +125,17 @@ def prepare(
     chain: Optional[str] = typer.Option(
         None, help="Protein chains to keep, comma separated (default: all)"
     ),
+    protein_itp: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        help="Predefined CG protein topology (single molecule), used with --protein-gro "
+        "instead of martinize2 and OLIVES",
+    ),
+    protein_gro: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        help="Predefined CG protein structure, in the frame of the complex",
+    ),
     config_file: Optional[Path] = typer.Option(
         None, "--config", exists=True, help="YAML file overriding the default settings"
     ),
@@ -134,8 +145,10 @@ def prepare(
     """
     Prepare a system directory from a protein-ligand complex and a coarse-grained ligand
     model: split the complex, place the CG ligand in the pocket, martinize the protein
-    and add the pocket reference bead.
+    (or use a predefined CG protein) and add the pocket reference bead.
     """
+    if (protein_itp is None) != (protein_gro is None):
+        raise typer.BadParameter("Give both --protein-itp and --protein-gro, or neither")
     output = output.resolve()
     if (output / "config.yaml").exists():
         if not force:
@@ -186,6 +199,12 @@ def prepare(
     sim_config.protein.ligand = ligand_com.tolist()
     if chain is not None:
         sim_config.protein.chain = chain
+    if protein_itp is not None:
+        sim_config.protein.cg_itp = str(protein_itp)
+        sim_config.protein.cg_gro = str(protein_gro)
+    for key in ("cg_itp", "cg_gro"):
+        if sim_config.protein.get(key):
+            sim_config.protein[key] = str(Path(sim_config.protein[key]).resolve())
     if sim_config.queue.get("path"):
         sim_config.queue.path = str(Path(sim_config.queue.path).resolve())
     OmegaConf.save(config, output / "config.yaml")
